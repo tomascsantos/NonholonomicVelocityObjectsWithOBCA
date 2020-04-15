@@ -82,31 +82,31 @@ for i in pb.range():
     np.add(Pos, Vel * Dt, Pos)  # Fast version of Pos = Pos + Vel*Dt
 
     # Impose the bouncing at the walls
-    if Pos[0, 0] <= -Lb0:
-        Pos[0, 0] = -Lb0
-        Vel[0, 0] = -Vel[0, 0]
-    elif Pos[0, 0] >= Lb0:
-        Pos[0, 0] = Lb0
-        Vel[0, 0] = -Vel[0, 0]
-    elif Pos[0, 1] <= -Lb1:
-        Pos[0, 1] = -Lb1
-        Vel[0, 1] = -Vel[0, 1]
-    elif Pos[0, 1] >= Lb1:
-        Pos[0, 1] = Lb1
-        Vel[0, 1] = -Vel[0, 1]
-    for s in range(1, Nsp):
-        if Pos[s, 0] <= -Ls0:
-            Pos[s, 0] = -Ls0
-            Vel[s, 0] = -Vel[s, 0]
-        elif Pos[s, 0] >= Ls0:
-            Pos[s, 0] = Ls0
-            Vel[s, 0] = -Vel[s, 0]
-        elif Pos[s, 1] <= -Ls1:
-            Pos[s, 1] = -Ls1
-            Vel[s, 1] = -Vel[s, 1]
-        elif Pos[s, 1] >= Ls1:
-            Pos[s, 1] = Ls1
-            Vel[s, 1] = -Vel[s, 1]
+    # if Pos[0, 0] <= -Lb0:
+    #     Pos[0, 0] = -Lb0
+    #     Vel[0, 0] = -Vel[0, 0]
+    # elif Pos[0, 0] >= Lb0:
+    #     Pos[0, 0] = Lb0
+    #     Vel[0, 0] = -Vel[0, 0]
+    # elif Pos[0, 1] <= -Lb1:
+    #     Pos[0, 1] = -Lb1
+    #     Vel[0, 1] = -Vel[0, 1]
+    # elif Pos[0, 1] >= Lb1:
+    #     Pos[0, 1] = Lb1
+    #     Vel[0, 1] = -Vel[0, 1]
+    # for s in range(1, Nsp):
+    #     if Pos[s, 0] <= -Ls0:
+    #         Pos[s, 0] = -Ls0
+    #         Vel[s, 0] = -Vel[s, 0]
+    #     elif Pos[s, 0] >= Ls0:
+    #         Pos[s, 0] = Ls0
+    #         Vel[s, 0] = -Vel[s, 0]
+    #     elif Pos[s, 1] <= -Ls1:
+    #         Pos[s, 1] = -Ls1
+    #         Vel[s, 1] = -Vel[s, 1]
+    #     elif Pos[s, 1] >= Ls1:
+    #         Pos[s, 1] = Ls1
+    #         Vel[s, 1] = -Vel[s, 1]
 
     # Create the set of all pairs and the list the colliding spheres
     Rij = Pos - Pos[:, np.newaxis]
