@@ -8,6 +8,7 @@ import numpy as np
 DT = 0.2  # [s] time tick
 WB = 2.5  # [m]
 CAR_PADDING = 0.5
+MAX_STEER = .52 #http://street.umn.edu/VehControl/javahelp/HTML/Definition_of_Vehicle_Heading_and_Steeing_Angle.htm
 
 
 def rotate(theta):
@@ -119,6 +120,12 @@ class Agent():
         g2 = np.array([0,0,0,1]) * u[1]
         state_dot = g1 + g2
         self.state = self.state + state_dot * DT
+
+        #check steering angle
+        if abs(self.state[3]) >= MAX_STEER:
+            self.state[3] = np.sign(self.state[3]) * MAX_STEER
+        print(self.state[3])
+
         theta_f = self.state[2]
         self.u = u
         d_theta = theta_f - theta
