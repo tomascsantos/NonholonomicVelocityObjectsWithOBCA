@@ -28,47 +28,28 @@ class Agent():
         self.z = 0
         self.name=name
         self.radius = .1
-        self.vis = []
         #initialize points for visualization
         pos = np.array(pos+[0])
         assert(len(pos) == 3)
 
-        """For creating the car bounding box, we assume the middle of the back
-        axle is the origin, make some points assuming that the car is at theta=0,
-        then rotate everyting by theta degrees and add the position of the back
-        axle to all the points """
-        self.points = []
-        self.pts = np.array([
+        """
+        For creating the car bounding box, we assume the middle of the back
+        axle is the origin. Then, make some points assuming that the car is at
+        theta=0. Next, rotate everyting by theta degrees and add the position
+        of the back axle to all the points
+        """
+        box = np.array([
             [0, CAR_PADDING, 0],
             [WB, CAR_PADDING, 0],
             [WB, -CAR_PADDING, 0],
             [0, -CAR_PADDING, 0],
         ])
 
-
-        """Note to future:
-
-        Look up the vtkTransform class because seems like we can directly apply
-        4x4 transforms to the mesh objects, So we only need to make the car once
-        then apply transforms to it in the future.
-
-
-        """
-
-        self.pts = self.pts @ rotate(theta).T
-        self.pts += pos
-
-        self.map.vp += [vtk.shapes.Sphere(pos=s, r=.1, alpha=1, c="black") for s in self.pts]
-        start = self.pts
-        end = np.concatenate(([self.pts[-1]], self.pts[:-1]))
-
-
-        self.points = [vtk.shapes.Lines(start, end, lw=3)]
-        map.vp += self.points
-
-        # for i in range(len(self.points)-1):
-        #     map.vp += [vtk.shapes.Line(self.points[i], self.points[i+1], lw=3)]
-        # map.vp += [vtk.shapes.Line(self.points[-1], self.points[0], lw=3)]
+        box = box @ rotate(theta).T
+        box += pos
+        shifted_box = np.concatenate(([box[-1]], box[:-1]))
+        self.bounding_box = vtk.shapes.Lines(box, shifted_box, lw=3)
+        map.vp += [self.bounding_box]
 
         vel = self.getVel3D()
         map.vp += [vtk.shapes.Arrow(pos, pos + vel, c="b")]
@@ -126,42 +107,34 @@ class Agent():
     #and Euler Discretization of dynamics
     def dynamics_step(self, u):
 
-        # self.map.vp += [vtk.shapes.Sphere(pos=s, r=.1, alpha=1, c="yellow") for s in self.pts]
-        # self.pts = self.pts - self.getPos3D() #move to origin
-        # self.map.vp += [vtk.shapes.Sphere(pos=s, r=.1, alpha=1, c="yellow") for s in self.pts]
-        #subtract the translation
+        #subtract the translation from visualization points
+        pts = np.array(self.bounding_box.points())
         pos = np.array([self.state[0], self.state[1], 0])
-        print("points first", self.pts[0])
-        self.pts = self.pts - pos
-        self.map.vp += [vtk.shapes.Sphere(pos=s, r=.1, alpha=1, c="blue") for s in self.pts]
+        pts = pts - pos
 
+        #update the state of the car [x, y, theta, phi]
         theta = self.state[2]
         phi = self.state[3]
         g1 = np.array([np.cos(theta), np.sin(theta), 1/WB*np.tan(phi), 0]) * u[0]
         g2 = np.array([0,0,0,1]) * u[1]
         state_dot = g1 + g2
-        print("state before", self.state)
         self.state = self.state + state_dot * DT
-        print("state after", self.state)
+        theta_f = self.state[2]
         self.u = u
+        d_theta = theta_f - theta
 
-        #update points postions
-        self.pts = self.pts @ rotate(theta).T
-        self.map.vp += [vtk.shapes.Sphere(pos=s, r=.1, alpha=1, c="red") for s in self.pts]
-        print("points second", self.pts[0])
+        #rotate visualization points around origin
+        pts = pts @ rotate(d_theta).T
 
         #add back the new translation
         pos = np.array([self.state[0], self.state[1], 0])
-        self.pts = self.pts + pos
-        self.map.vp += [vtk.shapes.Sphere(pos=s, r=.1, alpha=1, c="purple") for s in self.pts]
-        print("points last", self.pts[0])
+        pts = pts + pos
 
-        self.map.vp += [vtk.shapes.Sphere(pos=pos, r=.1, alpha=1, c="red")]
+        #add a trace of where the car has been
+        self.map.vp += [vtk.shapes.Sphere(pos=pos, r=.1, alpha=.5, c="red")]
 
         #update the point visualizations
-        for pt, point in zip(self.pts, self.points):
-            point.pos = pt
-
+        self.bounding_box.points(pts)
         return self.state
 
 
@@ -200,9 +173,9 @@ def follow_path(vp, map):
 
     vp += [vtk.shapes.Tube(path, c="blue", r=.08)]
 
-    for _ in range(20):
+    for _ in range(200):
 
-        a.dynamics_step([1,0])
+        a.dynamics_step([1,-.1])
         vp.show()
 
     vp.show()
