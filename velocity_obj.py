@@ -3,12 +3,12 @@ import vtkplotter as vtk
 import numpy as np
 # from: https://github.com/raphaelkba/Roboxi/blob/master/mpc.py
 from mpc import NonlinearMPC
-from Queue import queue
+from collections import deque
 
 #some inspiration from:
 #https://github.com/AtsushiSakai/PythonRobotics/blob/master/PathTracking/model_predictive_speed_and_steer_control/model_predictive_speed_and_steer_control.py
 
-DT = 0.2  # [s] time tick
+DT = 0.05  # [s] time tick
 WB = 2.5  # [m]
 CAR_PADDING = 0.5
 MAX_STEER = .52 #http://street.umn.edu/VehControl/javahelp/HTML/Definition_of_Vehicle_Heading_and_Steeing_Angle.htm
@@ -30,9 +30,10 @@ class Agent():
         self.map = map
         #state is x,y,theta,velocity,phi
         self.state = np.array(state)
+        self.runge = np.copy(self.state)
         self.name=name
         self.radius = .1
-        self.past_states = queue(max_size=5)
+        self.past_states = deque(maxlen=5)
         #initialize points for visualization
         pos = np.concatenate((state[0:2],[0]))
         assert(len(pos) == 3)
@@ -122,19 +123,20 @@ class Agent():
         phi = self.state[4]
 
         f = lambda x,u: np.array([
-            self.state[3] * np.cos(self.state[2]),
-            self.state[3] * np.sin(self.state[2]),
-            self.state[3] * np.tan(self.state[4])/WB,
+            x[3] * np.cos(x[2]),
+            x[3] * np.sin(x[2]),
+            x[3] * np.tan(x[4])/WB,
             u[0],
             u[1],
         ])
 
-        for k in range(len(self.states)):
-           k1 = f(X[:,k],         U[:,k])
-           k2 = f(X[:,k]+self.dT/2*k1, U[:,k])
-           k3 = f(X[:,k]+self.dT/2*k2, U[:,k])
-           k4 = f(X[:,k]+self.dT*k3,   U[:,k])
-           x_next = X[:,k] + self.dT/6*(k1+2*k2+2*k3+k4)
+        state_dot = f(self.state, u)
+
+        # k1 = f(self.state ,          u)
+        # k2 = f(self.state + DT/2*k1, u)
+        # k3 = f(self.state + DT/2*k2, u)
+        # k4 = f(self.state + DT*k3,   u)
+        # self.state = self.state + DT/6*(k1+2*k2+2*k3+k4)
 
 
 
@@ -142,9 +144,6 @@ class Agent():
         # g2 = np.array([0,0,0,0,1]) * u[1]
         # state_dot = g1 + g2
         self.state = self.state + state_dot * DT
-
-        print("easy version: ", self.state)
-        print("runge kutta: ", x_next)
 
         # #check velocity
         # if abs(self.state[3]) >= MAX_VEL:
@@ -220,7 +219,7 @@ def make_line_path(num_points, vp):
     return path
 
 def guess_path(path, state, vp):
-    endpt = min(path.shape[1], 40)
+    endpt = min(path.shape[1], 40) - 1
     dist = np.linalg.norm(state[:2] - path[:,endpt])
     num_steps = int(HORIZON_SECS / DT)
     velocity = dist / HORIZON_SECS
