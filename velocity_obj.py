@@ -1,6 +1,8 @@
 
 import vtkplotter as vtk
 import numpy as np
+# from: https://github.com/raphaelkba/Roboxi/blob/master/mpc.py
+from mpc import NonlinearMPC
 
 #some inspiration from:
 #https://github.com/AtsushiSakai/PythonRobotics/blob/master/PathTracking/model_predictive_speed_and_steer_control/model_predictive_speed_and_steer_control.py
@@ -9,6 +11,7 @@ DT = 0.2  # [s] time tick
 WB = 2.5  # [m]
 CAR_PADDING = 0.5
 MAX_STEER = .52 #http://street.umn.edu/VehControl/javahelp/HTML/Definition_of_Vehicle_Heading_and_Steeing_Angle.htm
+MAX_VEL = 50
 
 
 def rotate(theta):
@@ -21,16 +24,14 @@ def rotate(theta):
 
 
 class Agent():
-    def __init__(self, map, name, pos, u, theta):
+    def __init__(self, map, name, state=[0,0,0,0,0]):
         self.map = map
-        self.u = u
-        #state is x,y,theta,phi
-        self.state = np.array([pos[0],pos[1],theta,.3])
-        self.z = 0
+        #state is x,y,theta,velocity,phi
+        self.state = np.array(state)
         self.name=name
         self.radius = .1
         #initialize points for visualization
-        pos = np.array(pos+[0])
+        pos = np.concatenate((state[0:2],[0]))
         assert(len(pos) == 3)
 
         """
@@ -46,7 +47,7 @@ class Agent():
             [0, -CAR_PADDING, 0],
         ])
 
-        box = box @ rotate(theta).T
+        box = box @ rotate(state[2]).T
         box += pos
         shifted_box = np.concatenate(([box[-1]], box[:-1]))
         self.bounding_box = vtk.shapes.Lines(box, shifted_box, lw=3)
@@ -60,7 +61,7 @@ class Agent():
 
     def getVel3D(self):
         theta = self.state[2]
-        return np.array(self.u[0] * np.array([np.cos(theta), np.sin(theta), 0]))
+        return np.array(self.state[3] * np.array([np.cos(theta), np.sin(theta), 0]))
 
     def visVelocityObstacle(self):
         agents = self.map.get_neighbors(self.name)
@@ -113,21 +114,31 @@ class Agent():
         pos = np.array([self.state[0], self.state[1], 0])
         pts = pts - pos
 
-        #update the state of the car [x, y, theta, phi]
+        #update the state of the car [x, y, theta, vel, phi]
         theta = self.state[2]
-        phi = self.state[3]
-        g1 = np.array([np.cos(theta), np.sin(theta), 1/WB*np.tan(phi), 0]) * u[0]
-        g2 = np.array([0,0,0,1]) * u[1]
-        state_dot = g1 + g2
+        phi = self.state[4]
+
+        state_dot = np.array([
+            self.state[3] * np.cos(self.state[2]),
+            self.state[3] * np.sin(self.state[2]),
+            self.state[3] * np.tan(self.state[4])/WB,
+            u[0],
+            u[1],
+        ])
+
+        # g1 = np.array([np.cos(theta), np.sin(theta), 1/WB*np.tan(phi), 1, 0]) * u[0]
+        # g2 = np.array([0,0,0,0,1]) * u[1]
+        # state_dot = g1 + g2
         self.state = self.state + state_dot * DT
 
-        #check steering angle
-        if abs(self.state[3]) >= MAX_STEER:
-            self.state[3] = np.sign(self.state[3]) * MAX_STEER
-        print(self.state[3])
+        # #check velocity
+        # if abs(self.state[3]) >= MAX_VEL:
+        #     self.state[3] = np.sign(self.state[3]) * MAX_VEL
+        # #check steering angle
+        # if abs(self.state[4]) >= MAX_STEER:
+        #     self.state[4] = np.sign(self.state[4]) * MAX_STEER
 
         theta_f = self.state[2]
-        self.u = u
         d_theta = theta_f - theta
 
         #rotate visualization points around origin
@@ -159,30 +170,97 @@ class Map():
     def get_neighbors(self, name):
         return [a for a in self.agents if a.name != name]
 
-    def create_agent(self, name=None, pos=[0,0], v=[0,0], theta=0):
+    def create_agent(self, name=None, state=[0,0,0,0,0]):
         if name == None:
             name = "agent_" + str(len(self.agents))
-        a = Agent(self, name, pos, v, theta)
+        a = Agent(self, name, state)
         self.add_agent(a)
         return a
 
 
+def make_circle_path(num_points, vp):
+    path = np.array([[50*np.cos(np.pi * x + (np.pi / 2)),
+                      50*np.sin(np.pi * x + (np.pi / 2)),0]
+                      for x in np.linspace(0,1,num_points)])
+
+    #create warm start traj
+    start = path[0,:2]
+    middle = path[len(path)//2,:2]
+    end = path[-1,:2]
+    print(start, ":", end)
+    #transpose puts it in form that MPC wants: rows are states, columns are time.
+    #the warm start is a warm start for the whole state: [x,y,theta,v,phi].T
+    approx1 = np.linspace(start, middle, num=num_points//2)
+    approx2 = np.linspace(middle, end, num=num_points//2)
+    approx = np.concatenate((approx1, approx2))
+
+    warm_start = np.block([
+        [path[:,:2].T],
+        [np.zeros((1,num_points))],
+        [np.ones((1,num_points)) * 5],
+        [np.zeros((1,num_points))]
+    ])
 
 
+    return warm_start, path
+
+def plot_warm_start(warm_start, vp):
+    warm_start_3d = np.block([
+        [warm_start[:2,:]],
+        [np.zeros(len(warm_start.T))]
+    ])
+    vp += [vtk.shapes.Tube(warm_start_3d.T, c="yellow", alpha=.3, r=.2)]
+
+def plot_path(path, vp):
+    vp += [vtk.shapes.Circle(path[0,:2]+[0], c="green", r=1)]
+    vp += [vtk.shapes.Circle(path[-1,:2]+[0], c="red", r=.5)]
+
+
+def make_line_path(num_points, vp):
+    #state is x,y,theta,velocity,phi
+    path = np.linspace([0,0,0], [20,20,0], num_points).T
+
+    """Testing cost function"""
+    """TODO: YUPPPP THE COST FUNCTION WAS ROTATED!!!! """
+    print(len(path[0]))
+    print(path[0][:].shape)
+
+    warm_start = np.block([
+        [path[:,:2].T],
+        [np.ones((1,num_points)) * np.pi / 4], #45 degrees
+        [np.ones((1,num_points)) * 2], #velocity of 2
+        [np.zeros((1,num_points))] #steering angle of 0
+    ])
+
+    return warm_start, path
+
+
+import time
 def follow_path(vp, map):
     #generate a wavy path and visualize
     num_points = 200
-    traj = lambda x: np.sin(x/3)*np.exp(x/10)
-    path = [[x, traj(x), 0] for x in np.linspace(-50,30,num_points)]
+    #warm_start, path = make_circle_path(num_points, vp)
+    warm_start, path = make_line_path(num_points, vp)
+    plot_warm_start(warm_start, vp)
+    plot_path(path, vp)
 
+    input("continue")
+    """Adding MPC from toolbox"""
+    mpc = NonlinearMPC(6, DT, WB)
+
+    print(warm_start[:,0])
     #follow path with car
-    a = map.create_agent("main", v=[5,2,0], pos=[-50,0], theta=np.pi / 4)
+    a = map.create_agent("main", state=warm_start[:,0])
+    controls = mpc.MPC(warm_start, path)
+    print("controls: ", controls.shape)
 
     vp += [vtk.shapes.Tube(path, c="blue", r=.08)]
 
-    for _ in range(200):
-
-        a.dynamics_step([1,-.1])
+    for c in controls.T:
+        print(c)
+        print("state", a.state)
+        time.sleep(DT)
+        a.dynamics_step(c)
         vp.show()
 
     vp.show()
