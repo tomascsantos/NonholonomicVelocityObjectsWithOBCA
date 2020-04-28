@@ -3,6 +3,7 @@ import vtkplotter as vtk
 import numpy as np
 # from: https://github.com/raphaelkba/Roboxi/blob/master/mpc.py
 from mpc import NonlinearMPC
+from Queue import queue
 
 #some inspiration from:
 #https://github.com/AtsushiSakai/PythonRobotics/blob/master/PathTracking/model_predictive_speed_and_steer_control/model_predictive_speed_and_steer_control.py
@@ -13,6 +14,7 @@ CAR_PADDING = 0.5
 MAX_STEER = .52 #http://street.umn.edu/VehControl/javahelp/HTML/Definition_of_Vehicle_Heading_and_Steeing_Angle.htm
 MAX_VEL = 50
 
+HORIZON_SECS = 1
 
 def rotate(theta):
     rot = np.array([
@@ -30,6 +32,7 @@ class Agent():
         self.state = np.array(state)
         self.name=name
         self.radius = .1
+        self.past_states = queue(max_size=5)
         #initialize points for visualization
         pos = np.concatenate((state[0:2],[0]))
         assert(len(pos) == 3)
@@ -118,7 +121,7 @@ class Agent():
         theta = self.state[2]
         phi = self.state[4]
 
-        state_dot = np.array([
+        f = lambda x,u: np.array([
             self.state[3] * np.cos(self.state[2]),
             self.state[3] * np.sin(self.state[2]),
             self.state[3] * np.tan(self.state[4])/WB,
@@ -126,10 +129,22 @@ class Agent():
             u[1],
         ])
 
+        for k in range(len(self.states)):
+           k1 = f(X[:,k],         U[:,k])
+           k2 = f(X[:,k]+self.dT/2*k1, U[:,k])
+           k3 = f(X[:,k]+self.dT/2*k2, U[:,k])
+           k4 = f(X[:,k]+self.dT*k3,   U[:,k])
+           x_next = X[:,k] + self.dT/6*(k1+2*k2+2*k3+k4)
+
+
+
         # g1 = np.array([np.cos(theta), np.sin(theta), 1/WB*np.tan(phi), 1, 0]) * u[0]
         # g2 = np.array([0,0,0,0,1]) * u[1]
         # state_dot = g1 + g2
         self.state = self.state + state_dot * DT
+
+        print("easy version: ", self.state)
+        print("runge kutta: ", x_next)
 
         # #check velocity
         # if abs(self.state[3]) >= MAX_VEL:
@@ -180,29 +195,9 @@ class Map():
 
 def make_circle_path(num_points, vp):
     path = np.array([[50*np.cos(np.pi * x + (np.pi / 2)),
-                      50*np.sin(np.pi * x + (np.pi / 2)),0]
-                      for x in np.linspace(0,1,num_points)])
-
-    #create warm start traj
-    start = path[0,:2]
-    middle = path[len(path)//2,:2]
-    end = path[-1,:2]
-    print(start, ":", end)
-    #transpose puts it in form that MPC wants: rows are states, columns are time.
-    #the warm start is a warm start for the whole state: [x,y,theta,v,phi].T
-    approx1 = np.linspace(start, middle, num=num_points//2)
-    approx2 = np.linspace(middle, end, num=num_points//2)
-    approx = np.concatenate((approx1, approx2))
-
-    warm_start = np.block([
-        [path[:,:2].T],
-        [np.zeros((1,num_points))],
-        [np.ones((1,num_points)) * 5],
-        [np.zeros((1,num_points))]
-    ])
-
-
-    return warm_start, path
+                      50*np.sin(np.pi * x + (np.pi / 2))]
+                      for x in np.linspace(0,1,num_points)]).T
+    return path
 
 def plot_warm_start(warm_start, vp):
     warm_start_3d = np.block([
@@ -212,56 +207,79 @@ def plot_warm_start(warm_start, vp):
     vp += [vtk.shapes.Tube(warm_start_3d.T, c="yellow", alpha=.3, r=.2)]
 
 def plot_path(path, vp):
-    vp += [vtk.shapes.Circle(path[0,:2]+[0], c="green", r=1)]
-    vp += [vtk.shapes.Circle(path[-1,:2]+[0], c="red", r=.5)]
+    z = np.zeros((1,len(path[0])))
+    path = np.vstack((path, z))
+    vp += [vtk.shapes.Circle(path[:,0]+[0], c="green", r=1)]
+    vp += [vtk.shapes.Circle(path[:,-1]+[0], c="red", r=.5)]
+    vp += [vtk.shapes.Tube(path.T, c="blue", alpha=1, r=.08)]
 
 
 def make_line_path(num_points, vp):
     #state is x,y,theta,velocity,phi
-    path = np.linspace([0,0,0], [20,20,0], num_points).T
+    path = np.linspace([0,0], [20,20], num_points).T
+    return path
 
-    """Testing cost function"""
-    """TODO: YUPPPP THE COST FUNCTION WAS ROTATED!!!! """
-    print(len(path[0]))
-    print(path[0][:].shape)
-
+def guess_path(path, state, vp):
+    endpt = min(path.shape[1], 40)
+    dist = np.linalg.norm(state[:2] - path[:,endpt])
+    num_steps = int(HORIZON_SECS / DT)
+    velocity = dist / HORIZON_SECS
+    guess = np.linspace(state[:2], path[:,endpt], num=num_steps).T
+    diff = path[:,endpt] - state[:2]
+    angle = np.arctan2(diff[1], diff[0])
+    print("stat4", state[4])
     warm_start = np.block([
-        [path[:,:2].T],
-        [np.ones((1,num_points)) * np.pi / 4], #45 degrees
-        [np.ones((1,num_points)) * 2], #velocity of 2
-        [np.zeros((1,num_points))] #steering angle of 0
+        [guess], #first 2 rows include x, y
+        [np.ones((1,num_steps)) * state[2]], #current theta
+        [np.ones((1,num_steps)) * velocity], #velocity of 2
+        [np.ones((1,num_steps)) * state[4]] #current steering
     ])
+    # print("warm start: ", warm_start[:,0])
+    # print("staet: ", state)
+    # input("continue")
+    warm_start[:,0] = state
+    plot_warm_start(warm_start, vp)
+    return warm_start
 
-    return warm_start, path
+def closest_path_point(path, state):
 
+    diff = path.T - state[:2]
+    diff_norm = np.linalg.norm(diff, axis=1)
+    i = np.argmin(diff_norm)
+    return path[:,i:]
 
 import time
 def follow_path(vp, map):
     #generate a wavy path and visualize
     num_points = 200
-    #warm_start, path = make_circle_path(num_points, vp)
-    warm_start, path = make_line_path(num_points, vp)
-    plot_warm_start(warm_start, vp)
+    path = make_circle_path(num_points, vp)
+    #path = make_line_path(num_points, vp)
     plot_path(path, vp)
 
-    input("continue")
     """Adding MPC from toolbox"""
-    mpc = NonlinearMPC(6, DT, WB)
+    mpc = NonlinearMPC(HORIZON_SECS, DT, WB)
 
-    print(warm_start[:,0])
     #follow path with car
-    a = map.create_agent("main", state=warm_start[:,0])
-    controls = mpc.MPC(warm_start, path)
-    print("controls: ", controls.shape)
+    a = map.create_agent("main", state=np.append(path[:,0],[0,0,0]))
 
-    vp += [vtk.shapes.Tube(path, c="blue", r=.08)]
+    #while we're not at our destination yet
+    norm = np.linalg.norm(a.state[:2] - path[:2, -1])
+    while norm > 5:
+        path = closest_path_point(path, a.state)
+        warm_start = guess_path(path, a.state, vp)
+        start_time = time.time()
+        controls = mpc.MPC(warm_start, path)
+        time_f = time.time()
+        print("optimization time: ", time_f - start_time)
 
-    for c in controls.T:
-        print(c)
-        print("state", a.state)
-        time.sleep(DT)
-        a.dynamics_step(c)
-        vp.show()
+        for c in controls.T:
+            time.sleep(DT)
+            a.dynamics_step(c)
+            vp.show()
+
+        norm = np.linalg.norm(a.state[:2] - path[:2, -1])
+
+    print("GOAL REACHED")
 
     vp.show()
 
