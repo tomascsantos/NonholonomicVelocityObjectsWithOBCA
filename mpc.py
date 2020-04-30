@@ -81,27 +81,35 @@ class NonlinearMPC():
         opti.subject_to(opti.bounded(-5.0, a, 5.0))  # finish line at position 1
         opti.subject_to(opti.bounded(-math.radians(50.0), steer_angle, math.radians(50.0)))
 
-        # for k in range(self.H): # loop over control intervals
-        #    # Runge-Kutta 4 integration
-        #    k1 = f(X[:,k], U[:,k])
-        #    x_next = X[:,k] + self.dT*k1
-        #    opti.subject_to(X[:,k+1]==x_next) # close the gaps
-
         for k in range(self.H): # loop over control intervals
            # Runge-Kutta 4 integration
-           k1 = f(X[:,k],         U[:,k])
-           k2 = f(X[:,k]+self.dT/2*k1, U[:,k])
-           k3 = f(X[:,k]+self.dT/2*k2, U[:,k])
-           k4 = f(X[:,k]+self.dT*k3,   U[:,k])
-           x_next = X[:,k] + self.dT/6*(k1+2*k2+2*k3+k4)
+           k1 = f(X[:,k], U[:,k])
+           x_next = X[:,k] + self.dT*k1
            opti.subject_to(X[:,k+1]==x_next) # close the gaps
 
+        # for k in range(self.H): # loop over control intervals
+        #    # Runge-Kutta 4 integration
+        #    k1 = f(X[:,k],         U[:,k])
+        #    k2 = f(X[:,k]+self.dT/2*k1, U[:,k])
+        #    k3 = f(X[:,k]+self.dT/2*k2, U[:,k])
+        #    k4 = f(X[:,k]+self.dT*k3,   U[:,k])
+        #    x_next = X[:,k] + self.dT/6*(k1+2*k2+2*k3+k4)
+        #    opti.subject_to(X[:,k+1]==x_next) # close the gaps
+
         # initial conditions
-        opti.subject_to(x[0]==states[0,0])
-        opti.subject_to(y[0]==states[1,0])
-        opti.subject_to(theta[0]==states[2,0])
-        opti.subject_to(v[0]==states[3,0])
-        opti.subject_to(phi[0]==states[4,0])
+        # opti.subject_to(x[0]==states[0,0])
+        # opti.subject_to(y[0]==states[1,0])
+        # opti.subject_to(theta[0]==states[2,0])
+        # opti.subject_to(v[0]==states[3,0])
+        # opti.subject_to(phi[0]==states[4,0])
+
+        """do states as just an array"""
+        opti.subject_to(x[0]==states[0])
+        opti.subject_to(y[0]==states[1])
+        opti.subject_to(theta[0]==states[2])
+        opti.subject_to(v[0]==states[3])
+        opti.subject_to(phi[0]==states[4])
+
 
         # initial control conditions
         for n in range(self.H+1):
@@ -126,18 +134,18 @@ class NonlinearMPC():
             self.u_2[-1] = 0
 
             # ploting
-            from pylab import plot, step, figure, legend, show, spy
-            figure(1)
-            plot(sol.value(x[0:2]),sol.value(y[0:2]),label="speed")
-            plot(sol.value(x),sol.value(y),".")
+            # from pylab import plot, step, figure, legend, show, spy
+            # figure(1)
+            # plot(sol.value(x[0:2]),sol.value(y[0:2]),label="speed")
+            # plot(sol.value(x),sol.value(y),".")
 
             #figure()
             #spy(sol.value(jacobian(opti.g,opti.x)))
             #figure()
             #spy(sol.value(hessian(opti.f+dot(opti.lam_g,opti.g),opti.x)[0]))
-            del(opti)
-            show()
-            plt.pause(0.05)
+            # del(opti)
+            # show()
+            # plt.pause(0.05)
             return control
         except:
             # opti.debug.value(X)

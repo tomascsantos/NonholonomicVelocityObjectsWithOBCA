@@ -176,7 +176,6 @@ class Map():
 
     def __init__(self, vp):
         self.vp = vp
-        self.vp += vtk.Grid(sx=100, sy=100)
 
     def add_agent(self, agent):
         self.agents += [agent]
@@ -192,11 +191,18 @@ class Map():
         return a
 
 
-def make_circle_path(num_points, vp):
+def make_circle_path(num_points):
     path = np.array([[50*np.cos(np.pi * x + (np.pi / 2)),
                       50*np.sin(np.pi * x + (np.pi / 2))]
                       for x in np.linspace(0,1,num_points)]).T
     return path
+
+def make_sinusoid_path(num_points):
+    path = np.array([[  x,
+                        -8 * (np.cos(x/8) - 1),]
+                        for x in np.linspace(0,50,num_points)]).T
+    return path
+
 
 def plot_warm_start(warm_start, vp):
     warm_start_3d = np.block([
@@ -213,46 +219,41 @@ def plot_path(path, vp):
     vp += [vtk.shapes.Tube(path.T, c="blue", alpha=1, r=.08)]
 
 
-def make_line_path(num_points, vp):
+def make_line_path(num_points):
     #state is x,y,theta,velocity,phi
     path = np.linspace([0,0], [20,20], num_points).T
     return path
 
-def guess_path(path, state, vp):
-    endpt = min(path.shape[1], 40) - 1
-    dist = np.linalg.norm(state[:2] - path[:,endpt])
-    num_steps = int(HORIZON_SECS / DT)
-    velocity = dist / HORIZON_SECS
-    guess = np.linspace(state[:2], path[:,endpt], num=num_steps).T
-    diff = path[:,endpt] - state[:2]
-    angle = np.arctan2(diff[1], diff[0])
-    print("stat4", state[4])
-    warm_start = np.block([
-        [guess], #first 2 rows include x, y
-        [np.ones((1,num_steps)) * state[2]], #current theta
-        [np.ones((1,num_steps)) * velocity], #velocity of 2
-        [np.ones((1,num_steps)) * state[4]] #current steering
-    ])
-    # print("warm start: ", warm_start[:,0])
-    # print("staet: ", state)
-    # input("continue")
-    warm_start[:,0] = state
-    plot_warm_start(warm_start, vp)
-    return warm_start
+def closest_path_point(path, state, vp):
 
-def closest_path_point(path, state):
 
-    diff = path.T - state[:2]
+    s = state[:2]
+    vp += [vtk.shapes.Circle(s+[0], c="purple", r=.3, alpha=1)]
+
+    print(path.shape)
+    print(s)
+
+    diff = path.T - s
+    print(diff)
+    print(diff.shape)
+
     diff_norm = np.linalg.norm(diff, axis=1)
     i = np.argmin(diff_norm)
+    print("index is: ", i)
+    print("value is: ", path[:,i])
+    vp += [vtk.shapes.Circle(path[:,i]+[0], c="yellow", r=.3, alpha=1)]
+    vp.show(interactive=1)
+    vp.show(interactive=0)
     return path[:,i:]
+
 
 import time
 def follow_path(vp, map):
     #generate a wavy path and visualize
     num_points = 200
-    path = make_circle_path(num_points, vp)
-    #path = make_line_path(num_points, vp)
+    #path = make_circle_path(num_points)
+    #path = make_line_path(num_points)
+    path = make_sinusoid_path(num_points)
     plot_path(path, vp)
 
     """Adding MPC from toolbox"""
@@ -264,10 +265,9 @@ def follow_path(vp, map):
     #while we're not at our destination yet
     norm = np.linalg.norm(a.state[:2] - path[:2, -1])
     while norm > 5:
-        path = closest_path_point(path, a.state)
-        warm_start = guess_path(path, a.state, vp)
+        path = closest_path_point(path, a.state, vp)
         start_time = time.time()
-        controls = mpc.MPC(warm_start, path)
+        controls = mpc.MPC(a.state, path)
         time_f = time.time()
         print("optimization time: ", time_f - start_time)
 
@@ -280,7 +280,7 @@ def follow_path(vp, map):
 
     print("GOAL REACHED")
 
-    vp.show()
+    vp.show(interactive=1)
 
 
 def show_vel_obstacles():
