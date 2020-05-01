@@ -57,13 +57,29 @@ class NonlinearMPC():
         a = U[0,:]
         steer_angle = U[1,:]
 
+        def cost(i):
+            distance_from_path = 2* ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
+            shallow_steering = 1/2 *steer_angle[i]*steer_angle[i]
+            speed = a[i] * a[i] / 2
+            jerk, backwards = 0,0
+            if (i > 0):
+                jerk = (a[i] - a[i-1])**2
+            # if (v[i] < 0):
+            #     backwards = -1*v[i]
+            #backwards_motion = casadi.fmax(0, v[i] * -1)
+            return speed + distance_from_path + shallow_steering + backwards + jerk
         # cost function
         V = 0
         for i in range(self.H+1):
             if i < len(path[0]):
-                V += 5 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2) #+ a[i]*a[i] + steer_angle[i]*steer_angle[i]
+                """
+                add much bigger weight for last couple points
+                at the last value in H, the weight is 10x as important as first
+
+                """
+                V += cost(i)
             else:
-                V += (x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2 # + a[i]*a[i] + steer_angle[i]*steer_angle[i]
+                V += cost(-1)
     #    V += (casadi.fabs(casadi.cos(theta[-1]) - casadi.cos(pi))**2 + casadi.fabs(casadi.sin(theta[-1]) - casadi.sin(pi))**2)
         opti.minimize(V)
 

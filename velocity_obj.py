@@ -138,8 +138,6 @@ class Agent():
         # k4 = f(self.state + DT*k3,   u)
         # self.state = self.state + DT/6*(k1+2*k2+2*k3+k4)
 
-
-
         # g1 = np.array([np.cos(theta), np.sin(theta), 1/WB*np.tan(phi), 1, 0]) * u[0]
         # g2 = np.array([0,0,0,0,1]) * u[1]
         # state_dot = g1 + g2
@@ -192,8 +190,8 @@ class Map():
 
 
 def make_circle_path(num_points):
-    path = np.array([[50*np.cos(np.pi * x + (np.pi / 2)),
-                      50*np.sin(np.pi * x + (np.pi / 2))]
+    path = np.array([[50*np.cos(np.pi * x - (np.pi / 2)),
+                      50*np.sin(np.pi * x - (np.pi / 2))]
                       for x in np.linspace(0,1,num_points)]).T
     return path
 
@@ -225,25 +223,12 @@ def make_line_path(num_points):
     return path
 
 def closest_path_point(path, state, vp):
-
-
     s = state[:2]
-    vp += [vtk.shapes.Circle(s+[0], c="purple", r=.3, alpha=1)]
-
-    print(path.shape)
-    print(s)
-
+    #vp += [vtk.shapes.Circle(s+[0], c="purple", r=.3, alpha=1)]
     diff = path.T - s
-    print(diff)
-    print(diff.shape)
-
     diff_norm = np.linalg.norm(diff, axis=1)
     i = np.argmin(diff_norm)
-    print("index is: ", i)
-    print("value is: ", path[:,i])
-    vp += [vtk.shapes.Circle(path[:,i]+[0], c="yellow", r=.3, alpha=1)]
-    vp.show(interactive=1)
-    vp.show(interactive=0)
+    #vp += [vtk.shapes.Circle(path[:,i]+[0], c="yellow", r=.3, alpha=1)]
     return path[:,i:]
 
 
@@ -257,24 +242,24 @@ def follow_path(vp, map):
     plot_path(path, vp)
 
     """Adding MPC from toolbox"""
-    mpc = NonlinearMPC(HORIZON_SECS, DT, WB)
+    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB)
 
     #follow path with car
     a = map.create_agent("main", state=np.append(path[:,0],[0,0,0]))
 
     #while we're not at our destination yet
     norm = np.linalg.norm(a.state[:2] - path[:2, -1])
-    while norm > 5:
+    while norm > 1:
         path = closest_path_point(path, a.state, vp)
         start_time = time.time()
         controls = mpc.MPC(a.state, path)
         time_f = time.time()
         print("optimization time: ", time_f - start_time)
 
-        for c in controls.T:
-            time.sleep(DT)
-            a.dynamics_step(c)
-            vp.show()
+        # for c in controls.T:
+        print(controls[:,0])
+        a.dynamics_step(controls[:,0])
+        vp.show()
 
         norm = np.linalg.norm(a.state[:2] - path[:2, -1])
 
