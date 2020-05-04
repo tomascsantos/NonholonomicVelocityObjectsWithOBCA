@@ -179,7 +179,19 @@ class NonlinearMPC():
 
         # solve NLP
         p_opts = {"expand":True}
-        s_opts = {"max_iter": 5000}
+        s_opts = {"max_iter": 5000,
+                "hessian_approximation":"exact",
+                "mumps_pivtol":1e-6,
+                "alpha_for_y":"min",
+                "recalc_y":"yes",
+                "mumps_mem_percent":6000,
+                "max_iter":200,
+                "tol":1e-5,
+                "print_level":1,
+                "min_hessian_perturbation":1e-12,
+                "jacobian_regularization_value":1e-7
+        }
+
         opti.solver("ipopt", p_opts, s_opts)
         try:
             sol = opti.solve()
@@ -230,7 +242,7 @@ class NonlinearMPC():
 
         except:
             states = opti.debug.value(X)
-            print("NMPC failed")
+            print("NMPC failed", sys.exc_info())
             xys = states[:2,:].T
             self.vp += [vtk.shapes.Circle(pos=list(p)+[0],r=.1, c="darkred") for p in xys]
             self.vp.show(interactive=1)
