@@ -41,7 +41,12 @@ class NonlinearMPC():
         self.u_2 = np.zeros((self.H+1)) # steering velocity control
         self.lr = lr
 
-    def MPC(self, states, path):
+    def MPC(self, states, path, A, b):
+        """
+        Inputs:
+            A: 2xk ndarray of the obstacle normal vectors
+            b: 1xk ndarray of the obstacle offsets
+        """
 
         opti = Opti() # Optimization problem
 
@@ -56,6 +61,8 @@ class NonlinearMPC():
         U = opti.variable(2,self.H+1)   # control trajectory (acceleration and steering velocity)
         a = U[0,:]
         steer_angle = U[1,:]
+
+        lam = opti.variable(A.shape[0], self.H+1) #dual variables for obstacle opt
 
         def cost(i):
             distance_from_path = 2* ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
@@ -112,6 +119,18 @@ class NonlinearMPC():
         #    x_next = X[:,k] + self.dT/6*(k1+2*k2+2*k3+k4)
         #    opti.subject_to(X[:,k+1]==x_next) # close the gaps
 
+
+        """add the obstacle constraint OBCA"""
+        for k in range(self.H): # loop over lambdas
+            # (Ap - b)'lambda > 0
+            opti.subject_to((A @ X[:2,k]-b).T @ lam[:,k] > 0)
+            opti.subject_to(lam[:,k] > 0)
+            #|A'lambda|_2 <= 1
+            # tmp = A.T @ lam[:,k]
+            # norm = tmp.T @ tmp
+            norm = lam[:,k].T @ A @ A.T @ lam[:,k]
+            opti.subject_to(norm <= 1)
+
         # initial conditions
         # opti.subject_to(x[0]==states[0,0])
         # opti.subject_to(y[0]==states[1,0])
@@ -125,6 +144,7 @@ class NonlinearMPC():
         opti.subject_to(theta[0]==states[2])
         opti.subject_to(v[0]==states[3])
         opti.subject_to(phi[0]==states[4])
+
 
 
         # initial control conditions
@@ -155,6 +175,20 @@ class NonlinearMPC():
             # plot(sol.value(x[0:2]),sol.value(y[0:2]),label="speed")
             # plot(sol.value(x),sol.value(y),".")
 
+            # figure(1)
+            # plot(sol.value(lam),sol.value(y[0:2]),label="speed")
+            # plot(sol.value(x),sol.value(y),".")
+            lam_val = sol.value(lam)
+            x_val = sol.value(X)
+            print(lam_val)
+            # for k in lam_val.shape[1]:
+            #     print(k)
+            #     const1 = (A @ x_val[:2,k]-b).T @ lam_val[:,k]
+            #     tmp = A.T @ lam_val[:,k]
+            #     norm = tmp.T @ tmp
+            #     print(norm, "should be less than 1")
+            #     print(const1 , "should be > 0")
+
             #figure()
             #spy(sol.value(jacobian(opti.g,opti.x)))
             #figure()
@@ -166,15 +200,19 @@ class NonlinearMPC():
         except:
             # opti.debug.value(X)
             # opti.debug.value(X,opti.initial())
+            # opti.debug.value(lam,opti.initial())
             # opti.debug.show_infeasibilities()
             # opti.debug.x_describe(0)
-            # opti.debug.g_describe(0)
-            #opti.callback(lambda i: plt.plot(opti.debug.value(X)))
-            print(opti.debug.value(X))
-            print(opti.debug.value(X).shape)
-            plt.figure(1)
+            opti.debug.g_describe(0)
+            print("doing callbakcs? ")
+            opti.callback(lambda i: print(opti.debug.value(tmp)))
+            opti.callback(lambda i: plt.plot(opti.debug.value(lam)))
+            print(opti.debug.value(lam))
+            print(opti.debug.value(lam).shape)
             plt.plot(opti.debug.value(x[0:2]),opti.debug.value(y[0:2]),label="speed")
             plt.plot(opti.debug.value(x),opti.debug.value(y),".")
+
+            print(opti.debug.value(lam))
             plt.show()
             plt.pause(0.1)
             print("NMPC failed")
