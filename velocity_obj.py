@@ -291,7 +291,7 @@ def go_around_box(vp, map):
         [-1,0]
     ])
 
-    b = np.matrix([.25,0.25,.25,.25]).T
+    b = np.matrix([5,0.5,.5,.5]).T
     #b = np.matrix([.5]).T
     print(b.shape)
 

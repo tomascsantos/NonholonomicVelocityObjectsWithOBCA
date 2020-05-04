@@ -76,7 +76,7 @@ class NonlinearMPC():
         """
         def cost(i):
             distance_from_path = 1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
-            distance_from_end = 1 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
+            distance_from_end = .9 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
             shallow_steering = 1 *steer_angle[i]*steer_angle[i]
             speed = a[i] * a[i] / 2
             #obst = .000000000001 / (A @ X[:2,i]-b).T @ lam[:,i]
@@ -168,8 +168,8 @@ class NonlinearMPC():
         for n in range(self.H+1):
             opti.set_initial(U[0,n], self.u_1[n])
             opti.set_initial(U[1,n], self.u_2[n])
-            #opti.set_initial(X[:,n], self.warm_x[:,n])
-            #opti.set_initial(lam[:,n], self.warm_lam[:,n])
+            opti.set_initial(X[:,n], self.warm_x[:,n])
+            opti.set_initial(lam[:,n], self.warm_lam[:,n])
 
         # solve NLP
         p_opts = {"expand":True}
@@ -190,6 +190,7 @@ class NonlinearMPC():
             self.u_1[-1] = 0
             self.u_2[-1] = 0
             self.warm_x[:,-1] = np.zeros((5))
+            #the line below this totally breaks things.
             #self.warm_lam[:,-1] = np.zeros((5))
 
             # ploting
