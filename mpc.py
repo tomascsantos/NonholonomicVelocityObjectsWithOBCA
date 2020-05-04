@@ -174,7 +174,19 @@ class NonlinearMPC():
 
         # solve NLP
         p_opts = {"expand":True}
-        s_opts = {"max_iter": 5000}
+        s_opts = {"max_iter": 5000,
+                "hessian_approximation":"exact",
+                "mumps_pivtol":1e-6,
+                "alpha_for_y":"min",
+                "recalc_y":"yes",
+                "mumps_mem_percent":6000,
+                "max_iter":200,
+                "tol":1e-5,
+                "print_level":0,
+                "min_hessian_perturbation":1e-12,
+                "jacobian_regularization_value":1e-7
+        }
+
         opti.solver("ipopt", p_opts, s_opts)
         try:
             sol = opti.solve()
