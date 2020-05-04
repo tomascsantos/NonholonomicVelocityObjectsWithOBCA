@@ -32,7 +32,7 @@ import matplotlib.pyplot as plt
 
 class NonlinearMPC():
 
-    def __init__(self, N, dT, lr, A):
+    def __init__(self, N, dT, lr, A, vp):
         self.N = N # prediction horizon in seconds
         self.dT = dT # timestep
         self.H = int(N/dT) # prrdiction horizon steps
@@ -42,6 +42,7 @@ class NonlinearMPC():
         self.warm_x = np.zeros((5,self.H+1))
         self.warm_lam = np.zeros((A.shape[0], self.H+1))
         self.lr = lr
+        self.vp = vp
 
     def MPC(self, states, path, A, b):
         """
@@ -221,26 +222,13 @@ class NonlinearMPC():
             # show()
             # plt.pause(0.05)
             return control
-        except:
-            # opti.debug.value(X)
-            # opti.debug.value(X,opti.initial())
-            # opti.debug.value(lam,opti.initial())
-            # opti.debug.show_infeasibilities()
-            # opti.debug.x_describe(0)
-            opti.debug.g_describe(0)
-            print("doing callbakcs? ")
-            print("unexpected error: ", sys.exc_info())
-            opti.callback(lambda i: print(opti.debug.value(tmp)))
-            # opti.callback(lambda i: plt.plot(opti.debug.value(lam)))
-            # print(opti.debug.value(lam))
-            # print(opti.debug.value(lam).shape)
-            plt.plot(opti.debug.value(x[0:2]),opti.debug.value(y[0:2]),label="speed")
-            plt.plot(opti.debug.value(x),opti.debug.value(y),".")
 
-            # print(opti.debug.value(lam))
-            plt.show()
-            plt.pause(0.1)
+        except:
+            states = opti.debug.value(X)
             print("NMPC failed")
+            xys = states[:2,:].T
+            self.vp += [vtk.shapes.Circle(pos=list(p)+[0],r=.1, c="darkred") for p in xys]
+            self.vp.show(interactive=1)
 
         # in case it fails use previous computed controls and shift it
         control = np.array([self.u_1[0], self.u_2[0]])
