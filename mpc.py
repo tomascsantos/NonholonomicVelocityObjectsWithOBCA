@@ -65,6 +65,7 @@ class NonlinearMPC():
         steer_angle = U[1,:]
 
         lam = opti.variable(A.shape[0], self.H+1) #dual variables for obstacle opt
+        slack = opti.variable(self.H+1) #dual variables for obstacle opt
 
 
 
@@ -79,6 +80,7 @@ class NonlinearMPC():
             distance_from_end = .9 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
             shallow_steering = 1 *steer_angle[i]*steer_angle[i]
             speed = a[i] * a[i] / 2
+            slack_cost = 100 * slack[i]
             #obst = .000000000001 / (A @ X[:2,i]-b).T @ lam[:,i]
             jerk, backwards = 0,0
             if (i > 0):
@@ -89,7 +91,7 @@ class NonlinearMPC():
             #backwards_motion = casadi.fmax(0, v[i] * -1)
             return speed + distance_from_path \
                     + shallow_steering + backwards + \
-                    jerk + distance_from_end
+                    jerk + distance_from_end + slack_cost
         # cost function
         V = 0
         for i in range(self.H+1):
@@ -138,13 +140,14 @@ class NonlinearMPC():
         """add the obstacle constraint OBCA"""
         for k in range(self.H): # loop over lambdas
             # (Ap - b)'lambda > 0
-            opti.subject_to((A @ X[:2,k]-b).T @ lam[:,k] > 1)
+            opti.subject_to((A @ X[:2,k]-b).T @ lam[:,k] > -slack[k])
             opti.subject_to(lam[:,k] > 0)
+            opti.subject_to(slack[k] > 0)
             #|A'lambda|_2 <= 1
             # tmp = A.T @ lam[:,k]
             # norm = tmp.T @ tmp
             norm = lam[:,k].T @ A @ A.T @ lam[:,k]
-            opti.subject_to(norm <= 1)
+            opti.subject_to(norm == 1)
 
         # initial conditions
         # opti.subject_to(x[0]==states[0,0])
@@ -170,6 +173,7 @@ class NonlinearMPC():
             opti.set_initial(U[1,n], self.u_2[n])
             opti.set_initial(X[:,n], self.warm_x[:,n])
             opti.set_initial(lam[:,n], self.warm_lam[:,n])
+            opti.set_initial(slack[:], np.zeros(self.H+1))
 
         # solve NLP
         p_opts = {"expand":True}
