@@ -32,13 +32,15 @@ import matplotlib.pyplot as plt
 
 class NonlinearMPC():
 
-    def __init__(self, N, dT, lr):
+    def __init__(self, N, dT, lr, A):
         self.N = N # prediction horizon in seconds
         self.dT = dT # timestep
         self.H = int(N/dT) # prrdiction horizon steps
         print(self.H, "times steps")
         self.u_1 = np.zeros((self.H+1)) # acceleration control
         self.u_2 = np.zeros((self.H+1)) # steering velocity control
+        self.warm_x = np.zeros((5,self.H+1))
+        self.warm_lam = np.zeros((A.shape[0], self.H+1))
         self.lr = lr
 
     def MPC(self, states, path, A, b):
@@ -64,17 +66,30 @@ class NonlinearMPC():
 
         lam = opti.variable(A.shape[0], self.H+1) #dual variables for obstacle opt
 
+
+
+
+        """
+        Notes: when I change the cost to just be the final point, instead of
+        every point along the line it tried to avoid the obstacle but much
+        to late.
+        """
         def cost(i):
-            distance_from_path = 2* ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
-            shallow_steering = 1/2 *steer_angle[i]*steer_angle[i]
+            distance_from_path = 1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
+            distance_from_end = 1 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
+            shallow_steering = 1 *steer_angle[i]*steer_angle[i]
             speed = a[i] * a[i] / 2
+            #obst = .000000000001 / (A @ X[:2,i]-b).T @ lam[:,i]
             jerk, backwards = 0,0
             if (i > 0):
                 jerk = (a[i] - a[i-1])**2
-            # if (v[i] < 0):
+
+                        # if (v[i] < 0):
             #     backwards = -1*v[i]
             #backwards_motion = casadi.fmax(0, v[i] * -1)
-            return speed + distance_from_path + shallow_steering + backwards + jerk
+            return speed + distance_from_path \
+                    + shallow_steering + backwards + \
+                    jerk + distance_from_end
         # cost function
         V = 0
         for i in range(self.H+1):
@@ -123,7 +138,7 @@ class NonlinearMPC():
         """add the obstacle constraint OBCA"""
         for k in range(self.H): # loop over lambdas
             # (Ap - b)'lambda > 0
-            opti.subject_to((A @ X[:2,k]-b).T @ lam[:,k] > 0)
+            opti.subject_to((A @ X[:2,k]-b).T @ lam[:,k] > 1)
             opti.subject_to(lam[:,k] > 0)
             #|A'lambda|_2 <= 1
             # tmp = A.T @ lam[:,k]
@@ -146,11 +161,15 @@ class NonlinearMPC():
         opti.subject_to(phi[0]==states[4])
 
 
+        #initial x guesses.
+
 
         # initial control conditions
         for n in range(self.H+1):
             opti.set_initial(U[0,n], self.u_1[n])
             opti.set_initial(U[1,n], self.u_2[n])
+            #opti.set_initial(X[:,n], self.warm_x[:,n])
+            #opti.set_initial(lam[:,n], self.warm_lam[:,n])
 
         # solve NLP
         p_opts = {"expand":True}
@@ -166,8 +185,12 @@ class NonlinearMPC():
             for i in range(self.H):
                 self.u_1[i] = copy.deepcopy(sol.value(U[0,i+1]))
                 self.u_2[i] = copy.deepcopy(sol.value(U[1,i+1]))
+                self.warm_x[:,i] = copy.deepcopy(sol.value(X[:,i+1]))
+                self.warm_lam[:,i] = copy.deepcopy(sol.value(lam[:,i+1]))
             self.u_1[-1] = 0
             self.u_2[-1] = 0
+            self.warm_x[:,-1] = np.zeros((5))
+            #self.warm_lam[:,-1] = np.zeros((5))
 
             # ploting
             # from pylab import plot, step, figure, legend, show, spy
@@ -178,9 +201,9 @@ class NonlinearMPC():
             # figure(1)
             # plot(sol.value(lam),sol.value(y[0:2]),label="speed")
             # plot(sol.value(x),sol.value(y),".")
-            lam_val = sol.value(lam)
+            # lam_val = sol.value(lam)
             x_val = sol.value(X)
-            print(lam_val)
+            # print(lam_val)
             # for k in lam_val.shape[1]:
             #     print(k)
             #     const1 = (A @ x_val[:2,k]-b).T @ lam_val[:,k]
@@ -205,14 +228,15 @@ class NonlinearMPC():
             # opti.debug.x_describe(0)
             opti.debug.g_describe(0)
             print("doing callbakcs? ")
+            print("unexpected error: ", sys.exc_info())
             opti.callback(lambda i: print(opti.debug.value(tmp)))
-            opti.callback(lambda i: plt.plot(opti.debug.value(lam)))
-            print(opti.debug.value(lam))
-            print(opti.debug.value(lam).shape)
+            # opti.callback(lambda i: plt.plot(opti.debug.value(lam)))
+            # print(opti.debug.value(lam))
+            # print(opti.debug.value(lam).shape)
             plt.plot(opti.debug.value(x[0:2]),opti.debug.value(y[0:2]),label="speed")
             plt.plot(opti.debug.value(x),opti.debug.value(y),".")
 
-            print(opti.debug.value(lam))
+            # print(opti.debug.value(lam))
             plt.show()
             plt.pause(0.1)
             print("NMPC failed")
