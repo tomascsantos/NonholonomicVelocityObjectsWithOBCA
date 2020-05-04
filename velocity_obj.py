@@ -58,7 +58,8 @@ class Agent():
         map.vp += [self.bounding_box]
 
         vel = self.getVel3D()
-        map.vp += [vtk.shapes.Arrow(pos, pos + vel, c="r")]
+        self.vel_arrow = vtk.shapes.Line(pos, pos + vel, c="r", lw=3)
+        map.vp += [self.vel_arrow]
 
     def getPos3D(self):
         return np.array([self.state[0], self.state[1],0])
@@ -78,43 +79,32 @@ class Agent():
 
             #relative v arrow
             relVel = self.getVel3D() - a.getVel3D()
-            vp += [vtk.shapes.Arrow(pos, pos+relVel, c="green")]
+            #vp += [vtk.shapes.Arrow(pos, pos+relVel, c="green")]
             perp = np.cross([0,0,1], pos-a_pos)
             perp = perp / np.linalg.norm(perp)
             perp *= a.radius + self.radius
             perp2 = -1*perp
             leg1 = a_pos - pos + perp
             leg2 = a_pos - pos + perp2
-            leg1Normal = np.cross([0,0,1], leg1)
-            leg2Normal = np.cross(leg2, [0,0,1])
+            leg1Normal = np.cross([0,0,1], leg1)[:2] #only x,y
+            leg2Normal = np.cross(leg2, [0,0,1])[:2]
             leg1Normal = leg1Normal / np.linalg.norm(leg1Normal)
             leg2Normal = leg2Normal / np.linalg.norm(leg2Normal)
 
-            vp += [vtk.shapes.Arrow(pos, pos+leg1Normal, c="blue")]
-            vp += [vtk.shapes.Arrow(pos, pos+leg2Normal, c="blue")]
+            # vp += [vtk.shapes.Arrow(pos, pos+leg1Normal, c="blue")]
+            # vp += [vtk.shapes.Arrow(pos, pos+leg2Normal, c="blue")]
             #note we are appending as row vectors here.
             A.append(leg1Normal)
             A.append(leg2Normal)
             #project the pos onto the normal for the offset.
             #the normals are defined with respect to relatie v,
             #so when we add a's v we're back in absolute v frame.
-            b.append(leg1Normal @ (pos + a.getVel3D()))
-            b.append(leg2Normal @ (pos + a.getVel3D()))
+            b.append(leg1Normal @ (pos[:2] + a.getVel3D()[:2]))
+            b.append(leg2Normal @ (pos[:2] + a.getVel3D()[:2]))
 
         #now we define the constraints like we would for the opt prob.
         A = np.array(A)
-        b = np.array(b)
-
-        X = np.array([[x,y] for x in np.linspace(-20, 20, num=50)
-                            for y in np.linspace(-20,20, num=50)
-        ])
-        X = np.block([X, np.zeros((len(X),1))])
-        #print("x shape: ", X.shape)
-        #show = [print(x.shape) for x in X]
-        if (len(A) != 0):
-            X = [x for x in X if np.all(np.greater(A @ x - b, np.zeros(2)))]
-        vp += [vtk.shapes.Sphere(pos=x, r=.1, alpha=1, c="pink") for x in X]
-
+        b = np.array(b).reshape((len(b), 1))
         return A, b
 
 
@@ -146,10 +136,6 @@ class Agent():
         # k3 = f(self.state + DT/2*k2, u)
         # k4 = f(self.state + DT*k3,   u)
         # self.state = self.state + DT/6*(k1+2*k2+2*k3+k4)
-
-        # g1 = np.array([np.cos(theta), np.sin(theta), 1/WB*np.tan(phi), 1, 0]) * u[0]
-        # g2 = np.array([0,0,0,0,1]) * u[1]
-        # state_dot = g1 + g2
         self.state = self.state + state_dot * DT
 
         # #check velocity
@@ -174,6 +160,7 @@ class Agent():
 
         #update the point visualizations
         self.bounding_box.points(pts)
+        self.vel_arrow.points([pos, pos+self.getVel3D()])
         return self.state
 
 
@@ -276,6 +263,60 @@ def follow_path(vp, map):
 
     vp.show(interactive=1)
 
+def go_around_moving_box(vp, map):
+    num_points = 200
+    path = make_line_path(num_points)
+    #path = make_sinusoid_path(num_points)
+    plot_path(path, vp)
+
+    """Define a box and visualize it"""
+    #row vector normals
+    A = np.array([
+        [0,1],
+        [0,-1],
+        [1,0],
+        [-1,0]
+    ])
+
+    b = np.matrix([5,0.5,.5,.5]).T
+    #b = np.matrix([.5]).T
+    print(b.shape)
+
+    vels = np.random.normal(scale=1, size=(2,500))
+    show = np.all(np.greater(b,A@vels), axis=0)
+    dots = [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
+            for v,s in zip(vels.T, show.T) if s]
+    vp += dots
+    vp.clear(dots)
+
+
+    """Adding MPC from toolbox"""
+    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, A)
+    a = map.create_agent("main", state=np.append(path[:,0],[0,0,0]))
+
+    #while we're not at our destination yet
+    norm = np.linalg.norm(a.state[:2] - path[:2, -1])
+    while norm > 1:
+        vp.show()
+        path = closest_path_point(path, a.state, vp)
+        start_time = time.time()
+        controls = mpc.MPC(a.state, path, A ,b)
+        time_f = time.time()
+        print("optimization time: ", time_f - start_time)
+
+        # for c in controls.T:
+        print(controls[:,0])
+        a.dynamics_step(controls[:,0])
+
+        norm = np.linalg.norm(a.state[:2] - path[:2, -1])
+
+    print("GOAL REACHED")
+
+    vp.show(interactive=1)
+
+
+
+
 def go_around_box(vp, map):
     num_points = 200
     path = make_line_path(num_points)
@@ -336,19 +377,28 @@ def show_vel_obstacles(vp, map):
     print(A.shape)
     print(b.shape)
 
-    vels = np.random.normal(scale=5, size=(100,2))
-    vels = np.block([vels, np.zeros((len(vels),1))])
 
-    pos = a.getPos3D()
-    [print(np.greater(A @ v - b, np.zeros(2))) for v in vels]
-    vp += [vtk.shapes.Arrow(pos, pos+v, c="purple", s=.005)
-            for v in vels if np.all(np.greater(A @ v - b, np.zeros(2)))]
+    vels = np.random.normal(loc=a.state[:2].reshape((2,1)), scale=1, size=(2,500))
+    show = np.all(np.greater(A@vels, b), axis=0)
+    dots = [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
+            for v,s in zip(vels.T, show.T) if s]
+    vp += dots
+    vp.clear(dots)
 
-    vp.show(interactive=1)
     for _ in range(100):
+
+        vels = np.random.normal(loc=a.state[:2].reshape((2,1)), scale=1, size=(2,500))
+        show = np.all(np.greater(A@vels, b), axis=0)
+        dots = [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
+                for v,s in zip(vels.T, show.T) if s]
+        vp += dots
+        vp.show(interactive=1)
+        vp.clear(dots)
+
         time.sleep(DT)
         a.dynamics_step([1,0])
         o.dynamics_step([1,0])
+        A, b = a.visVelocityObstacle()
         vp.show(interactive=0)
 
     vp.show(interactive=1)
@@ -357,9 +407,9 @@ def main():
     vp = vtk.Plotter(size=(1080, 720), axes=0, interactive=0)
     map = Map(vp)
 
-    #show_vel_obstacles(vp, map)
+    show_vel_obstacles(vp, map)
     #follow_path(vp, map)
-    go_around_box(vp, map)
+    #go_around_box(vp, map)
 
     vp.show(interactive=1)
 
