@@ -11,10 +11,10 @@ from collections import deque
 DT = 0.05  # [s] time tick
 WB = 2.5  # [m]
 CAR_PADDING = 0.5
-MAX_STEER = .52 #http://street.umn.edu/VehControl/javahelp/HTML/Definition_of_Vehicle_Heading_and_Steeing_Angle.htm
+MAX_STEER = .8 #http://street.umn.edu/VehControl/javahelp/HTML/Definition_of_Vehicle_Heading_and_Steeing_Angle.htm
 MAX_VEL = 50
 
-HORIZON_SECS = 1
+HORIZON_SECS = 2
 
 def rotate(theta):
     rot = np.array([
@@ -291,7 +291,7 @@ def go_around_box(vp, map):
         [-1,0]
     ])
 
-    b = np.matrix([2,0.5,.5,.5]).T
+    b = np.matrix([5,0.5,.5,.5]).T
     #b = np.matrix([.5]).T
     print(b.shape)
 
@@ -302,7 +302,7 @@ def go_around_box(vp, map):
 
 
     """Adding MPC from toolbox"""
-    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB)
+    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, A, vp)
     a = map.create_agent("main", state=np.append(path[:,0],[0,0,0]))
 
     #while we're not at our destination yet
