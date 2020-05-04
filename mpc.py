@@ -24,6 +24,7 @@ source: https://web.casadi.org/
 
 import numpy as np
 from sys import path
+import vtkplotter as vtk
 #path.append(r"C:\Users\rapha\Documents\Projects\casadi-windows-py36-v3.4.5-64bit")
 from casadi import *
 import copy
@@ -32,7 +33,7 @@ import matplotlib.pyplot as plt
 
 class NonlinearMPC():
 
-    def __init__(self, N, dT, lr, A):
+    def __init__(self, N, dT, lr, A, vp):
         self.N = N # prediction horizon in seconds
         self.dT = dT # timestep
         self.H = int(N/dT) # prrdiction horizon steps
@@ -42,6 +43,7 @@ class NonlinearMPC():
         self.warm_x = np.zeros((5,self.H+1))
         self.warm_lam = np.zeros((A.shape[0], self.H+1))
         self.lr = lr
+        self.vp = vp
 
     def MPC(self, states, path, A, b):
         """
@@ -77,7 +79,7 @@ class NonlinearMPC():
         """
         def cost(i):
             distance_from_path = 1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
-            distance_from_end = .9 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
+            distance_from_end = 8 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
             shallow_steering = 1 *steer_angle[i]*steer_angle[i]
             speed = a[i] * a[i] / 2
             slack_cost = 100 * slack[i]
@@ -141,13 +143,13 @@ class NonlinearMPC():
         for k in range(self.H): # loop over lambdas
             # (Ap - b)'lambda > 0
             opti.subject_to((A @ X[:2,k]-b).T @ lam[:,k] > -slack[k])
-            opti.subject_to(lam[:,k] > 0)
-            opti.subject_to(slack[k] > 0)
+            opti.subject_to(lam[:,k] >= 0)
+            opti.subject_to(slack[k] >= 0)
             #|A'lambda|_2 <= 1
             # tmp = A.T @ lam[:,k]
             # norm = tmp.T @ tmp
             norm = lam[:,k].T @ A @ A.T @ lam[:,k]
-            opti.subject_to(norm == 1)
+            opti.subject_to(norm <= 1)
 
         # initial conditions
         # opti.subject_to(x[0]==states[0,0])
@@ -225,26 +227,14 @@ class NonlinearMPC():
             # show()
             # plt.pause(0.05)
             return control
-        except:
-            # opti.debug.value(X)
-            # opti.debug.value(X,opti.initial())
-            # opti.debug.value(lam,opti.initial())
-            # opti.debug.show_infeasibilities()
-            # opti.debug.x_describe(0)
-            opti.debug.g_describe(0)
-            print("doing callbakcs? ")
-            print("unexpected error: ", sys.exc_info())
-            opti.callback(lambda i: print(opti.debug.value(tmp)))
-            # opti.callback(lambda i: plt.plot(opti.debug.value(lam)))
-            # print(opti.debug.value(lam))
-            # print(opti.debug.value(lam).shape)
-            plt.plot(opti.debug.value(x[0:2]),opti.debug.value(y[0:2]),label="speed")
-            plt.plot(opti.debug.value(x),opti.debug.value(y),".")
 
-            # print(opti.debug.value(lam))
-            plt.show()
-            plt.pause(0.1)
+        except:
+            states = opti.debug.value(X)
             print("NMPC failed")
+            xys = states[:2,:].T
+            self.vp += [vtk.shapes.Circle(pos=list(p)+[0],r=.1, c="darkred") for p in xys]
+            self.vp.show(interactive=1)
+
 
         # in case it fails use previous computed controls and shift it
         control = np.array([self.u_1[0], self.u_2[0]])
