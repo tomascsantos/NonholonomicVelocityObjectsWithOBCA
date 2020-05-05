@@ -79,7 +79,7 @@ class NonlinearMPC():
         """
         def cost(i):
             distance_from_path = 1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
-            distance_from_end = 8 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
+            distance_from_end = 1 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
             shallow_steering = 1 *steer_angle[i]*steer_angle[i]
             speed = a[i] * a[i] / 2
             slack_cost = 100 * slack[i]
@@ -149,7 +149,7 @@ class NonlinearMPC():
             # tmp = A.T @ lam[:,k]
             # norm = tmp.T @ tmp
             norm = lam[:,k].T @ A @ A.T @ lam[:,k]
-            opti.subject_to(norm <= 1)
+            opti.subject_to(norm == 1)
 
         # initial conditions
         # opti.subject_to(x[0]==states[0,0])
@@ -179,13 +179,12 @@ class NonlinearMPC():
 
         # solve NLP
         p_opts = {"expand":True}
-        s_opts = {"max_iter": 5000,
+        s_opts = {"max_iter": 1000,
                 "hessian_approximation":"exact",
                 "mumps_pivtol":1e-6,
                 "alpha_for_y":"min",
                 "recalc_y":"yes",
                 "mumps_mem_percent":6000,
-                "max_iter":200,
                 "tol":1e-5,
                 "print_level":1,
                 "min_hessian_perturbation":1e-12,
@@ -242,7 +241,11 @@ class NonlinearMPC():
 
         except:
             states = opti.debug.value(X)
+            slack= opti.debug.value(slack)
+            lam= opti.debug.value(lam)
             print("NMPC failed", sys.exc_info())
+            print("slack is: ", slack)
+            print("lam is: ", lam)
             xys = states[:2,:].T
             self.vp += [vtk.shapes.Circle(pos=list(p)+[0],r=.1, c="darkred") for p in xys]
             self.vp.show(interactive=1)
