@@ -288,7 +288,7 @@ def go_around_moving_box(vp, map):
                     for i in range(A.shape[0])]
         vp += planes
         vp += cone
-        vp.show()
+        vp.show(interactive=1)
 
         path = closest_path_point(path, a.state, vp)
         start_time = time.time()
