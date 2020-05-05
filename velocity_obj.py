@@ -223,7 +223,7 @@ def plot_path(path, vp):
     path = np.vstack((path, z))
     vp += [vtk.shapes.Circle(path[:,0]+[0], c="green", r=1)]
     vp += [vtk.shapes.Circle(path[:,-1]+[0], c="red", r=.5)]
-    vp += [vtk.shapes.Tube(path.T, c="blue", alpha=1, r=.08)]
+    vp += [vtk.shapes.Tube(path.T, c="blue", alpha=1, r=.01)]
 
 
 def make_line_path(num_points):

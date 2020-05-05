@@ -80,7 +80,7 @@ class NonlinearMPC():
         def cost(i):
             distance_from_path = 1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
             distance_from_end = 1 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
-            shallow_steering = 1 *steer_angle[i]*steer_angle[i]
+            shallow_steering = 5 *steer_angle[i]*steer_angle[i]
             speed = a[i] * a[i] / 2
             slack_cost = 100 * slack[i]
             #obst = .000000000001 / (A @ X[:2,i]-b).T @ lam[:,i]
@@ -140,9 +140,9 @@ class NonlinearMPC():
 
 
         """add the obstacle constraint OBCA"""
-        for k in range(self.H): # loop over lambdas
+        for k in range(self.H+1): # loop over lambdas
             # (Ap - b)'lambda > 0
-            opti.subject_to((A @ X[:2,k]-b).T @ lam[:,k] > -slack[k])
+            opti.subject_to((A @ X[:2,k]-b).T @ lam[:,k] > 0.5 - slack[k])
             opti.subject_to(lam[:,k] >= 0)
             opti.subject_to(slack[k] >= 0)
             #|A'lambda|_2 <= 1
@@ -150,6 +150,9 @@ class NonlinearMPC():
             # norm = tmp.T @ tmp
             norm = lam[:,k].T @ A @ A.T @ lam[:,k]
             opti.subject_to(norm == 1)
+
+            if k < self.H:
+                opti.subject_to(x[k] - x[k+1] < 1)
 
         # initial conditions
         # opti.subject_to(x[0]==states[0,0])
