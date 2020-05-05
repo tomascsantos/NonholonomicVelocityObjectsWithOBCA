@@ -29,6 +29,7 @@ from casadi import *
 import copy
 import math
 import matplotlib.pyplot as plt
+import vtkplotter as vtk
 
 class NonlinearMPC():
 
@@ -139,7 +140,7 @@ class NonlinearMPC():
         """add the obstacle constraint OBCA"""
         for k in range(self.H): # loop over lambdas
             # (Ap - b)'lambda > 0
-            opti.subject_to((A @ X[:2,k]-b).T @ lam[:,k] > 1)
+            opti.subject_to((A @ X[:2,k]-b).T @ lam[:,k] > 0.1)
             opti.subject_to(lam[:,k] > 0)
             #|A'lambda|_2 <= 1
             # tmp = A.T @ lam[:,k]
@@ -237,7 +238,7 @@ class NonlinearMPC():
 
         except:
             states = opti.debug.value(X)
-            print("NMPC failed")
+            print("NMPC failed", sys.exc_info())
             xys = states[:2,:].T
             self.vp += [vtk.shapes.Circle(pos=list(p)+[0],r=.1, c="darkred") for p in xys]
             self.vp.show(interactive=1)
