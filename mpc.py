@@ -77,9 +77,9 @@ class NonlinearMPC():
         to late.
         """
         def cost(i):
-            distance_from_path = 1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
-            distance_from_end = 1 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
-            shallow_steering = 1 *steer_angle[i]*steer_angle[i]
+            distance_from_path = .1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
+            distance_from_end = .1 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
+            shallow_steering = .1 *steer_angle[i]*steer_angle[i]
             speed = a[i] * a[i] / 2
             #obst = .000000000001 / (A @ X[:2,i]-b).T @ lam[:,i]
             jerk, backwards = 0,0
@@ -144,7 +144,7 @@ class NonlinearMPC():
             vel_y = v[k] * casadi.sin(X[2,k])
             Av = A[0,:] * vel_x + A[1,:] * vel_y
             # opti.subject_to((A @ [vel_x, vel_y]-b).T @ lam[:,k] > 1)
-            opti.subject_to((Av-b).T @ lam[:,k] > 0.1)
+            opti.subject_to((Av-b).T @ lam[:,k] > 0)
             opti.subject_to(lam[:,k] > 0)
             #|A'lambda|_2 <= 1
             # tmp = A.T @ lam[:,k]
@@ -179,7 +179,18 @@ class NonlinearMPC():
 
         # solve NLP
         p_opts = {"expand":True}
-        s_opts = {"max_iter": 5000}
+        s_opts = {"max_iter": 5000,
+                "hessian_approximation":"exact",
+                "mumps_pivtol":1e-6,
+                "alpha_for_y":"min",
+                "recalc_y":"yes",
+                "mumps_mem_percent":6000,
+                "max_iter":200,
+                "tol":1e-5,
+                "print_level":0,
+                "min_hessian_perturbation":1e-12,
+                "jacobian_regularization_value":1e-7
+        }
         opti.solver("ipopt", p_opts, s_opts)
         try:
             sol = opti.solve()
@@ -229,7 +240,7 @@ class NonlinearMPC():
             return control
         except:
             states = opti.debug.value(X)
-            print("NMPC failed")
+            print("NMPC failed", sys.exc_info())
             xys = states[:2,:].T
             self.vp += [vtk.shapes.Circle(pos=list(p)+[0],r=.1, c="darkred") for p in xys]
             self.vp.show(interactive=1)

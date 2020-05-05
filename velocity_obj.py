@@ -304,6 +304,7 @@ def go_around_moving_box(vp, map):
         norm = np.linalg.norm(a.state[:2] - path[:2, -1])
 
     print("GOAL REACHED")
+    input("continue")
 
     vp.show(interactive=1)
 
