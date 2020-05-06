@@ -67,6 +67,7 @@ class NonlinearMPC():
         steer_angle = U[1,:]
 
         lam = opti.variable(A.shape[0], self.H+1) #dual variables for obstacle opt
+        slack = opti.variable(self.H+1) #dual variables for obstacle opt
 
 
 
@@ -77,10 +78,11 @@ class NonlinearMPC():
         to late.
         """
         def cost(i):
-            distance_from_path = .1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
-            distance_from_end = .1 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
+            distance_from_path = 1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
+            distance_from_end = 2 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
             shallow_steering = .1 *steer_angle[i]*steer_angle[i]
-            speed = a[i] * a[i] / 2
+            speed = .1 * a[i] * a[i]
+            slack_cost = 90 * slack[i]
             #obst = .000000000001 / (A @ X[:2,i]-b).T @ lam[:,i]
             jerk, backwards = 0,0
             if (i > 0):
@@ -91,7 +93,7 @@ class NonlinearMPC():
             #backwards_motion = casadi.fmax(0, v[i] * -1)
             return speed + distance_from_path \
                     + shallow_steering + backwards + \
-                    jerk + distance_from_end
+                    jerk + distance_from_end + slack_cost
         # cost function
         V = 0
         for i in range(self.H+1):
@@ -138,19 +140,23 @@ class NonlinearMPC():
 
 
         """add the obstacle constraint OBCA"""
-        for k in range(self.H): # loop over lambdas
+        for k in range(self.H+1): # loop over lambdas
             # (Ap - b)'lambda > 0
-            vel_x = v[k] * casadi.cos(X[2,k])
-            vel_y = v[k] * casadi.sin(X[2,k])
-            Av = A[0,:] * vel_x + A[1,:] * vel_y
+            vel_x = v[k] * (casadi.cos(theta[k])) + x[k]
+            vel_y = v[k] * (casadi.sin(theta[k])) + y[k]
+            Av = A[:,0] * vel_x + A[:,1] * vel_y
             # opti.subject_to((A @ [vel_x, vel_y]-b).T @ lam[:,k] > 1)
-            opti.subject_to((Av-b).T @ lam[:,k] > 0)
-            opti.subject_to(lam[:,k] > 0)
+            opti.subject_to((Av-b).T @ lam[:,k] > -slack[k])
+            opti.subject_to(lam[:,k] >= 0)
+            opti.subject_to(slack[k] >= 0)
             #|A'lambda|_2 <= 1
             # tmp = A.T @ lam[:,k]
             # norm = tmp.T @ tmp
             norm = lam[:,k].T @ A @ A.T @ lam[:,k]
-            opti.subject_to(norm <= 1)
+            opti.subject_to(norm == 1)
+
+            if k < self.H:
+                opti.subject_to(x[k] - x[k+1] < 1)
 
         # initial conditions
         # opti.subject_to(x[0]==states[0,0])
@@ -179,13 +185,12 @@ class NonlinearMPC():
 
         # solve NLP
         p_opts = {"expand":True}
-        s_opts = {"max_iter": 5000,
+        s_opts = {"max_iter": 1000,
                 "hessian_approximation":"exact",
                 "mumps_pivtol":1e-6,
                 "alpha_for_y":"min",
                 "recalc_y":"yes",
                 "mumps_mem_percent":6000,
-                "max_iter":200,
                 "tol":1e-5,
                 "print_level":0,
                 "min_hessian_perturbation":1e-12,
@@ -207,43 +212,64 @@ class NonlinearMPC():
             self.u_1[-1] = 0
             self.u_2[-1] = 0
             self.warm_x[:,-1] = np.zeros((5))
-            #the line below this totally breaks things.
-            #self.warm_lam[:,-1] = np.zeros((5))
 
-            # ploting
-            # from pylab import plot, step, figure, legend, show, spy
-            # figure(1)
-            # plot(sol.value(x[0:2]),sol.value(y[0:2]),label="speed")
-            # plot(sol.value(x),sol.value(y),".")
 
-            # figure(1)
-            # plot(sol.value(lam),sol.value(y[0:2]),label="speed")
-            # plot(sol.value(x),sol.value(y),".")
-            # lam_val = sol.value(lam)
-            x_val = sol.value(X)
-            # print(lam_val)
-            # for k in lam_val.shape[1]:
-            #     print(k)
-            #     const1 = (A @ x_val[:2,k]-b).T @ lam_val[:,k]
-            #     tmp = A.T @ lam_val[:,k]
-            #     norm = tmp.T @ tmp
-            #     print(norm, "should be less than 1")
-            #     print(const1 , "should be > 0")
 
-            #figure()
-            #spy(sol.value(jacobian(opti.g,opti.x)))
-            #figure()
-            #spy(sol.value(hessian(opti.f+dot(opti.lam_g,opti.g),opti.x)[0]))
-            # del(opti)
-            # show()
-            # plt.pause(0.05)
-            return control
+            x = sol.value(x)
+            y = sol.value(X[1,:])
+            theta = sol.value(X[2,:])
+            v = sol.value(X[3,:])
+            phi = sol.value(X[4,:])
+            slack = sol.value(slack)
+            theta = sol.value(theta)
+            print(sol.value(lam))
+            print("Slack cost is: ", slack)
+            #turn on to visualize planned velocities
+            viz = []
+            if (True):
+                # for i in range(len(v)):
+                i=0
+                pos = [x[i], y[i]]
+                velxy = v[i] * np.array([np.cos(theta[i]), np.sin(theta[i])])
+                velxy += pos
+                viz += [vtk.shapes.Sphere(list(velxy)+[0], c="green", r=.1)]
+                vels = np.random.normal(loc=velxy.reshape(2,1), scale=2.5, size=(2,200))
+                show = np.all(np.greater(b, A@vels), axis=0)
+                viz += [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
+                        for v,s in zip(vels.T, show.T) if s]
+                for i in range(len(v)):
+                    pos = [x[i], y[i]]
+                    velxy = v[i] * np.array([np.cos(theta[i]), np.sin(theta[i])])
+                    velxy += pos
+                    viz += [vtk.shapes.Sphere(list(velxy)+[0], c="green", r=.1)]
+
+                    vel_x = v[i] * (casadi.cos(theta[i])) + x[i]
+                    vel_y = v[i] * (casadi.sin(theta[i])) + y[i]
+                    Av = A[:,0] * vel_x + A[:,1] * vel_y
+                    # print("Av-b for ", i, " is: ", Av-b)
+                    # print("Av-b.T @ lam is : ", (Av-b).T @ lam[:,i])
+                    # print("-Slack is: ", -slack[i])
+
+
+
+                # vels = np.random.normal(loc=pos.reshape((2,1)), scale=3, size=(2,300))
+                # show = np.all(np.greater(b, A@vels), axis=0)
+                # dots = [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
+                #         for v,s in zip(vels.T, show.T) if s]
+
+
+
+
+            return control, viz
         except:
             states = opti.debug.value(X)
+            print(opti.debug.value(lam))
+            print(opti.debug.value(slack))
             print("NMPC failed", sys.exc_info())
             xys = states[:2,:].T
             self.vp += [vtk.shapes.Circle(pos=list(p)+[0],r=.1, c="darkred") for p in xys]
             self.vp.show(interactive=1)
+            input("finish")
 
         # in case it fails use previous computed controls and shift it
         control = np.array([self.u_1[0], self.u_2[0]])

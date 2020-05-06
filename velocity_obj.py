@@ -14,7 +14,7 @@ CAR_PADDING = 0.5
 MAX_STEER = .8 #http://street.umn.edu/VehControl/javahelp/HTML/Definition_of_Vehicle_Heading_and_Steeing_Angle.htm
 MAX_VEL = 50
 
-HORIZON_SECS = 2
+HORIZON_SECS = 2.5
 
 def rotate(theta):
     rot = np.array([
@@ -73,9 +73,12 @@ class Agent():
         vp = self.map.vp
         A = []
         b = []
+        planes = [] #for visualizing the constraint
+
         for a in agents[:1]:
             a_pos = a.getPos3D()
             pos = self.getPos3D()
+            a_vel = a.getVel3D()
 
             #relative v arrow
             relVel = self.getVel3D() - a.getVel3D()
@@ -84,28 +87,48 @@ class Agent():
             perp = perp / np.linalg.norm(perp)
             perp *= a.radius + self.radius
             perp2 = -1*perp
+            # planes += [vtk.shapes.Arrow(a_pos, a_pos+perp, c="green")]
+            # planes += [vtk.shapes.Arrow(a_pos, a_pos+perp2, c="green")]
             leg1 = a_pos - pos + perp
             leg2 = a_pos - pos + perp2
-            leg1Normal = np.cross(leg1,[0,0,1])[:2] #only x,y
-            leg2Normal = np.cross([0,0,1], leg2)[:2]
+            leg1Normal = np.cross(leg1,[0,0,1])
+            leg2Normal = np.cross([0,0,1], leg2)
             leg1Normal = leg1Normal / np.linalg.norm(leg1Normal)
             leg2Normal = leg2Normal / np.linalg.norm(leg2Normal)
 
-            # vp += [vtk.shapes.Arrow(pos, pos+leg1Normal, c="blue")]
-            # vp += [vtk.shapes.Arrow(pos, pos+leg2Normal, c="blue")]
+            """
+            create the truncation hyperplane location
+            Formula: (((obstacle pos - agent pos) / T ) + agent pos) + a_vel
+
+            TODO: must add the radius to both of them.
+            """
+            trunc_pt = (a_pos - pos) / HORIZON_SECS + pos + a_vel
+            trunc_direction = (a_pos - pos) / np.linalg.norm(a_pos - pos)
+            # radius_norm = (a.radius + self.radius) / HORIZON_SECS
+            # trunc_dir_scaled = trunc_direction * radius_norm
+            # trunc_pt -= trunc_dir_scaled
+            trunc_direction *= -1 #want points on the other side of it.
+            planes += [vtk.shapes.Circle(trunc_pt, r=.1, c="green")]
+            planes += [vtk.shapes.Plane(trunc_pt, normal=trunc_direction, c="blue")]
             #note we are appending as row vectors here.
-            A.append(leg1Normal)
-            A.append(leg2Normal)
+            A.append(leg1Normal[:2])
+            A.append(leg2Normal[:2])
+            A.append(trunc_direction[:2])
             #project the pos onto the normal for the offset.
             #the normals are defined with respect to relatie v,
             #so when we add a's v we're back in absolute v frame.
-            b.append(leg1Normal @ (pos[:2] + a.getVel3D()[:2]))
-            b.append(leg2Normal @ (pos[:2] + a.getVel3D()[:2]))
+            b.append(leg1Normal[:2] @ (pos[:2] + a_vel[:2]))
+            b.append(leg2Normal[:2] @ (pos[:2] + a_vel[:2]))
+            b.append(trunc_direction[:2] @ (trunc_pt[:2]))
+
+            planes += [vtk.shapes.Plane(pos=pos+a_vel, normal=leg1Normal, sx=3)]
+            planes += [vtk.shapes.Plane(pos=pos+a_vel, normal=leg2Normal, sx=3)]
+            # planes += [vtk.shapes.Plane(pos=trunc_pt+a_vel, normal=trunc_direction, sx=3)]
 
         #now we define the constraints like we would for the opt prob.
         A = np.array(A)
         b = np.array(b).reshape((len(b), 1))
-        return A, b
+        return A, b, planes
 
 
     #redefine using pfaffian constraints
@@ -269,39 +292,44 @@ def go_around_moving_box(vp, map):
 
     """Adding MPC from toolbox"""
     a = map.create_agent("main", state=np.append(path[:,0],[0,0,0]))
-    o_pos = a.state + [10, 5, -np.pi/2,.5,0]
+    o_pos = a.state + [10, 5, -np.pi/2,1,0]
     o = map.create_agent("obstacle", state=o_pos)
 
-    A, b = a.visVelocityObstacle()
+    A, b, _ = a.visVelocityObstacle()
+    print("A shape: ", A.shape)
 
     mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, A, vp)
 
+    vp.show(interactive=0)
     #while we're not at our destination yet
     norm = np.linalg.norm(a.state[:2] - path[:2, -1])
     while norm > 1:
 
-        A, b = a.visVelocityObstacle()
+        A, b, planes = a.visVelocityObstacle()
         #visualize the plane and it's feasible region
         cone = cone_viz(a.getPos3D()[:2], A, b)
-        plane_pos = a.getPos3D() + o.getVel3D()
-        planes = [vtk.shapes.Plane(pos=plane_pos, normal=list(A[i,:])+[0], sx=3)
-                    for i in range(A.shape[0])]
         vp += planes
         vp += cone
-        vp.show(interactive=1)
 
         path = closest_path_point(path, a.state, vp)
         start_time = time.time()
-        controls = mpc.MPC(a.state, path, A ,b)
+        controls, viz = mpc.MPC(a.state, path, A ,b)
+        vp += viz
         time_f = time.time()
-        print("optimization time: ", time_f - start_time)
+
+        vp.show(interactive=1)
+        vp.clear(planes)
+        if len(cone) > 0:
+            vp.clear(cone)
+        if len(viz) > 0:
+            vp.clear(viz)
+
+
 
         a.dynamics_step(controls[:,0])
         o.dynamics_step([1,0])
-        vp.clear(planes)
-        vp.clear(cone)
-
         norm = np.linalg.norm(a.state[:2] - path[:2, -1])
+        print("optimization time: ", time_f - start_time)
 
     print("GOAL REACHED")
     input("continue")
@@ -368,6 +396,7 @@ def cone_viz(pos, A, b):
         pos[0] + 3*np.sin(linespace *2 * np.pi),
         pos[1] + 3*np.cos(linespace *2*np.pi)
     ])
+    # vels = np.random.normal(loc=pos.reshape((2,1)), scale=3, size=(2,300))
     show = np.all(np.greater(b, A@vels), axis=0)
     dots = [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
             for v,s in zip(vels.T, show.T) if s]
@@ -380,21 +409,17 @@ def show_vel_obstacles(vp, map):
 
     for _ in range(100):
 
-        A, b = a.visVelocityObstacle()
+        A, b, planes = a.visVelocityObstacle(vp)
         cone = cone_viz(a.getPos3D()[:2], A, b)
         vp += cone
-        plane_pos = a.getPos3D() + o.getVel3D()
-        planes = [vtk.shapes.Plane(pos=plane_pos, normal=list(A[i,:])+[0], sx=3)
-                    for i in range(A.shape[0])]
         vp += planes
-        vp.show(interactive=0)
+        vp.show(interactive=1)
         vp.clear(planes)
         vp.clear(cone)
 
         time.sleep(DT)
         a.dynamics_step([1,0])
         o.dynamics_step([1,0])
-        A, b = a.visVelocityObstacle()
 
     vp.show(interactive=1)
 
