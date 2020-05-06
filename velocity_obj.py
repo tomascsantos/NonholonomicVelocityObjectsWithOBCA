@@ -30,16 +30,14 @@ class Agent():
         self.map = map
         #state is x,y,theta,velocity,phi
         self.state = np.array(state)
-        self.runge = np.copy(self.state)
         self.name=name
         self.radius = 2.5
-        self.past_states = deque(maxlen=5)
         #initialize points for visualization
         pos = np.concatenate((state[0:2],[0]))
         assert(len(pos) == 3)
 
         """
-        For creating the car bounding box, we assume the middle of the back
+        For creating the car visualization box, we assume the middle of the back
         axle is the origin. Then, make some points assuming that the car is at
         theta=0. Next, rotate everyting by theta degrees and add the position
         of the back axle to all the points
@@ -60,12 +58,28 @@ class Agent():
         vel = self.getVel3D()
         map.vp += [vtk.shapes.Arrow(pos, pos + vel, c="r")]
 
+        """
+        To create the obstacle convex set. We define 4 normals in G to make a
+        rectangle, then we rotate them by theta. We also need to find the g
+        values s.t. B = {y:Gy<=g}
+        """
+        normals = np.array([
+            [0,1],
+            [0-1],
+            [1,0],
+            [-1,0]
+        ])
+
+
     def getPos3D(self):
         return np.array([self.state[0], self.state[1],0])
 
     def getVel3D(self):
         theta = self.state[2]
         return np.array(self.state[3] * np.array([np.cos(theta), np.sin(theta), 0]))
+
+    def visBoundingBox(self):
+
 
     def visVelocityObstacle(self):
         agents = self.map.get_neighbors(self.name)
@@ -140,24 +154,7 @@ class Agent():
         ])
 
         state_dot = f(self.state, u)
-
-        # k1 = f(self.state ,          u)
-        # k2 = f(self.state + DT/2*k1, u)
-        # k3 = f(self.state + DT/2*k2, u)
-        # k4 = f(self.state + DT*k3,   u)
-        # self.state = self.state + DT/6*(k1+2*k2+2*k3+k4)
-
-        # g1 = np.array([np.cos(theta), np.sin(theta), 1/WB*np.tan(phi), 1, 0]) * u[0]
-        # g2 = np.array([0,0,0,0,1]) * u[1]
-        # state_dot = g1 + g2
         self.state = self.state + state_dot * DT
-
-        # #check velocity
-        # if abs(self.state[3]) >= MAX_VEL:
-        #     self.state[3] = np.sign(self.state[3]) * MAX_VEL
-        # #check steering angle
-        # if abs(self.state[4]) >= MAX_STEER:
-        #     self.state[4] = np.sign(self.state[4]) * MAX_STEER
 
         theta_f = self.state[2]
         d_theta = theta_f - theta

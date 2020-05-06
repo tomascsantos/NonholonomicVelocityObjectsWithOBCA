@@ -142,7 +142,7 @@ class NonlinearMPC():
         """add the obstacle constraint OBCA"""
         for k in range(self.H+1): # loop over lambdas
             # (Ap - b)'lambda > 0
-            opti.subject_to((A @ X[:2,k]-b).T @ lam[:,k] > 0.5 - slack[k])
+            opti.subject_to((A @ X[:2,k]-b).T @ lam[:,k] > - slack[k])
             opti.subject_to(lam[:,k] >= 0)
             opti.subject_to(slack[k] >= 0)
             #|A'lambda|_2 <= 1
