@@ -14,7 +14,7 @@ CAR_PADDING = 0.5
 MAX_STEER = .8 #http://street.umn.edu/VehControl/javahelp/HTML/Definition_of_Vehicle_Heading_and_Steeing_Angle.htm
 MAX_VEL = 50
 
-HORIZON_SECS = 2.5
+HORIZON_SECS = 2
 
 def rotate(theta):
     rot = np.array([
@@ -113,13 +113,13 @@ class Agent():
             #note we are appending as row vectors here.
             A.append(leg1Normal[:2])
             A.append(leg2Normal[:2])
-            A.append(trunc_direction[:2])
+            # A.append(trunc_direction[:2])
             #project the pos onto the normal for the offset.
             #the normals are defined with respect to relatie v,
             #so when we add a's v we're back in absolute v frame.
             b.append(leg1Normal[:2] @ (pos[:2] + a_vel[:2]))
             b.append(leg2Normal[:2] @ (pos[:2] + a_vel[:2]))
-            b.append(trunc_direction[:2] @ (trunc_pt[:2]))
+            # b.append(trunc_direction[:2] @ (trunc_pt[:2]))
 
             planes += [vtk.shapes.Plane(pos=pos+a_vel, normal=leg1Normal, sx=3)]
             planes += [vtk.shapes.Plane(pos=pos+a_vel, normal=leg2Normal, sx=3)]
@@ -292,7 +292,7 @@ def go_around_moving_box(vp, map):
 
     """Adding MPC from toolbox"""
     a = map.create_agent("main", state=np.append(path[:,0],[0,0,0]))
-    o_pos = a.state + [10, 5, -np.pi/2,1,0]
+    o_pos = a.state + [20, -1, -np.pi,1,0]
     o = map.create_agent("obstacle", state=o_pos)
 
     A, b, _ = a.visVelocityObstacle()
@@ -308,8 +308,8 @@ def go_around_moving_box(vp, map):
         A, b, planes = a.visVelocityObstacle()
         #visualize the plane and it's feasible region
         cone = cone_viz(a.getPos3D()[:2], A, b)
-        vp += planes
-        vp += cone
+        # vp += planes
+        # vp += cone
 
         path = closest_path_point(path, a.state, vp)
         start_time = time.time()
@@ -317,10 +317,10 @@ def go_around_moving_box(vp, map):
         vp += viz
         time_f = time.time()
 
-        vp.show(interactive=1)
-        vp.clear(planes)
-        if len(cone) > 0:
-            vp.clear(cone)
+        vp.show(interactive=0)
+        # vp.clear(planes)
+        # if len(cone) > 0:
+        #     vp.clear(cone)
         if len(viz) > 0:
             vp.clear(viz)
 

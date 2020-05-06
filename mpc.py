@@ -78,11 +78,11 @@ class NonlinearMPC():
         to late.
         """
         def cost(i):
-            distance_from_path = 1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
+            distance_from_path = .1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
             distance_from_end = 2 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
             shallow_steering = .1 *steer_angle[i]*steer_angle[i]
-            speed = .1 * a[i] * a[i]
-            slack_cost = 90 * slack[i]
+            speed = 0#.01 * a[i] * a[i]
+            slack_cost = 100 * slack[i]
             #obst = .000000000001 / (A @ X[:2,i]-b).T @ lam[:,i]
             jerk, backwards = 0,0
             if (i > 0):
@@ -222,7 +222,7 @@ class NonlinearMPC():
             phi = sol.value(X[4,:])
             slack = sol.value(slack)
             theta = sol.value(theta)
-            print(sol.value(lam))
+            # print(sol.value(lam))
             print("Slack cost is: ", slack)
             #turn on to visualize planned velocities
             viz = []
