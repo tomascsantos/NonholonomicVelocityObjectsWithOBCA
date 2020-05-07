@@ -35,7 +35,7 @@ DEFAULT_A = np.array([0,0]).reshape((1,2))
 
 class NonlinearMPC():
 
-    def __init__(self, N, dT, lr, vp, A=DEFAULT_A):
+    def __init__(self, N, dT, lr, vp, A):
         self.N = N # prediction horizon in seconds
         self.dT = dT # timestep
         self.H = int(N/dT) # prrdiction horizon steps
@@ -47,7 +47,7 @@ class NonlinearMPC():
         self.lr = lr
         self.vp = vp
 
-    def MPC(self, states, path, A=DEFAULT_A, b=[0]):
+    def MPC(self, states, path, A, b):
         """
         Inputs:
             A: 2xk ndarray of the obstacle normal vectors
@@ -126,8 +126,6 @@ class NonlinearMPC():
             opti.subject_to(slack[k] >= 0)
             norm = lam[:,k].T @ A @ A.T @ lam[:,k]
             opti.subject_to(norm == 1)
-
-            if k < self.H:
 
         """Initial Conditions"""
         opti.subject_to(x[0]==states[0])
