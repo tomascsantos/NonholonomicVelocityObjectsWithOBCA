@@ -401,7 +401,7 @@ def go_around_box(vp, map):
 
 
     """Adding MPC from toolbox"""
-    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, A)
+    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, A, vp)
     a = map.create_agent("main", state=np.append(path[:,0],[0,0,0]))
 
     #while we're not at our destination yet

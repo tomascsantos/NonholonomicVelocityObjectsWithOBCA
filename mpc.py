@@ -36,6 +36,7 @@ DEFAULT_A = np.array([0,0]).reshape((1,2))
 class NonlinearMPC():
 
     def __init__(self, N, dT, lr, vp, A=None):
+
         self.N = N # prediction horizon in seconds
         self.dT = dT # timestep
         self.H = int(N/dT) # prrdiction horizon steps
@@ -47,6 +48,7 @@ class NonlinearMPC():
         self.vp = vp
         if (A is not None):
             self.warm_lam = np.zeros((A.shape[0], self.H+1))
+
 
     def MPC(self, states, path, A=None, b=None):
         """
@@ -228,6 +230,7 @@ class NonlinearMPC():
             self.vp += [vtk.shapes.Circle(pos=list(p)+[0],r=.1, c="darkred") for p in xys]
             self.vp.show(interactive=1)
             input("finish")
+
 
         # in case it fails use previous computed controls and shift it
         control = np.array([self.u_1[0], self.u_2[0]])
