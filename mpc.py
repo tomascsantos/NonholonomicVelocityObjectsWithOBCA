@@ -31,9 +31,11 @@ import copy
 import math
 import matplotlib.pyplot as plt
 
+DEFAULT_A = np.array([0,0]).reshape((1,2))
+
 class NonlinearMPC():
 
-    def __init__(self, N, dT, lr, A, vp):
+    def __init__(self, N, dT, lr, vp, A=DEFAULT_A):
         self.N = N # prediction horizon in seconds
         self.dT = dT # timestep
         self.H = int(N/dT) # prrdiction horizon steps
@@ -45,7 +47,7 @@ class NonlinearMPC():
         self.lr = lr
         self.vp = vp
 
-    def MPC(self, states, path, A, b):
+    def MPC(self, states, path, A=DEFAULT_A, b=[0]):
         """
         Inputs:
             A: 2xk ndarray of the obstacle normal vectors
@@ -69,28 +71,16 @@ class NonlinearMPC():
         lam = opti.variable(A.shape[0], self.H+1) #dual variables for obstacle opt
         slack = opti.variable(self.H+1) #dual variables for obstacle opt
 
-
-
-
-        """
-        Notes: when I change the cost to just be the final point, instead of
-        every point along the line it tried to avoid the obstacle but much
-        to late.
-        """
+        """Define Cost function"""
         def cost(i):
             distance_from_path = .1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
             distance_from_end = 2 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
             shallow_steering = .1 *steer_angle[i]*steer_angle[i]
             speed = 0#.01 * a[i] * a[i]
             slack_cost = 100 * slack[i]
-            #obst = .000000000001 / (A @ X[:2,i]-b).T @ lam[:,i]
             jerk, backwards = 0,0
             if (i > 0):
                 jerk = (a[i] - a[i-1])**2
-
-                        # if (v[i] < 0):
-            #     backwards = -1*v[i]
-            #backwards_motion = casadi.fmax(0, v[i] * -1)
             return speed + distance_from_path \
                     + shallow_steering + backwards + \
                     jerk + distance_from_end + slack_cost
@@ -98,85 +88,55 @@ class NonlinearMPC():
         V = 0
         for i in range(self.H+1):
             if i < len(path[0]):
-                """
-                add much bigger weight for last couple points
-                at the last value in H, the weight is 10x as important as first
-
-                """
                 V += cost(i)
             else:
                 V += cost(-1)
-    #    V += (casadi.fabs(casadi.cos(theta[-1]) - casadi.cos(pi))**2 + casadi.fabs(casadi.sin(theta[-1]) - casadi.sin(pi))**2)
         opti.minimize(V)
 
-        # system
+        """System Dynamics"""
         f = lambda x,u: vertcat(x[3,:]*casadi.cos(x[2,:]),
                                 x[3,:]*casadi.sin(x[2,:]),
                                 x[3,:]*casadi.tan(x[4,:])/self.lr,
                                 u[0,:],
                                 u[1,:])
 
-        # system constraints
+        """System Constraints"""
         opti.bounded(-math.pi, X[2,:], math.pi)
         opti.bounded(-50, X[3,:], 50)
         opti.bounded(-math.pi/3, X[4,:], math.pi/3)
-        opti.subject_to(opti.bounded(-5.0, a, 5.0))  # finish line at position 1
+        opti.subject_to(opti.bounded(-5.0, a, 5.0))
         opti.subject_to(opti.bounded(-math.radians(50.0), steer_angle, math.radians(50.0)))
 
         for k in range(self.H): # loop over control intervals
-           # Runge-Kutta 4 integration
            k1 = f(X[:,k], U[:,k])
            x_next = X[:,k] + self.dT*k1
-           opti.subject_to(X[:,k+1]==x_next) # close the gaps
-
-        # for k in range(self.H): # loop over control intervals
-        #    # Runge-Kutta 4 integration
-        #    k1 = f(X[:,k],         U[:,k])
-        #    k2 = f(X[:,k]+self.dT/2*k1, U[:,k])
-        #    k3 = f(X[:,k]+self.dT/2*k2, U[:,k])
-        #    k4 = f(X[:,k]+self.dT*k3,   U[:,k])
-        #    x_next = X[:,k] + self.dT/6*(k1+2*k2+2*k3+k4)
-        #    opti.subject_to(X[:,k+1]==x_next) # close the gaps
+           opti.subject_to(X[:,k+1]==x_next)
+           opti.subject_to(x[k] - x[k+1] < 1) # limit velocity
 
 
-        """add the obstacle constraint OBCA"""
+        """add the obstacle constraints OBCA"""
         for k in range(self.H+1): # loop over lambdas
             # (Ap - b)'lambda > 0
             vel_x = v[k] * (casadi.cos(theta[k])) + x[k]
             vel_y = v[k] * (casadi.sin(theta[k])) + y[k]
             Av = A[:,0] * vel_x + A[:,1] * vel_y
-            # opti.subject_to((A @ [vel_x, vel_y]-b).T @ lam[:,k] > 1)
+
             opti.subject_to((Av-b).T @ lam[:,k] > -slack[k])
             opti.subject_to(lam[:,k] >= 0)
             opti.subject_to(slack[k] >= 0)
-            #|A'lambda|_2 <= 1
-            # tmp = A.T @ lam[:,k]
-            # norm = tmp.T @ tmp
             norm = lam[:,k].T @ A @ A.T @ lam[:,k]
             opti.subject_to(norm == 1)
 
             if k < self.H:
-                opti.subject_to(x[k] - x[k+1] < 1)
 
-        # initial conditions
-        # opti.subject_to(x[0]==states[0,0])
-        # opti.subject_to(y[0]==states[1,0])
-        # opti.subject_to(theta[0]==states[2,0])
-        # opti.subject_to(v[0]==states[3,0])
-        # opti.subject_to(phi[0]==states[4,0])
-
-        """do states as just an array"""
+        """Initial Conditions"""
         opti.subject_to(x[0]==states[0])
         opti.subject_to(y[0]==states[1])
         opti.subject_to(theta[0]==states[2])
         opti.subject_to(v[0]==states[3])
         opti.subject_to(phi[0]==states[4])
 
-
-        #initial x guesses.
-
-
-        # initial control conditions
+        """Warm Start"""
         for n in range(self.H+1):
             opti.set_initial(U[0,n], self.u_1[n])
             opti.set_initial(U[1,n], self.u_2[n])
@@ -203,7 +163,7 @@ class NonlinearMPC():
             print("steering: ",  sol.value(U[1,0]))
             control = np.array([sol.value(U[0,:]), sol.value(U[1,:])])
 
-            # shift controls
+            """Populate Warm Start"""
             for i in range(self.H):
                 self.u_1[i] = copy.deepcopy(sol.value(U[0,i+1]))
                 self.u_2[i] = copy.deepcopy(sol.value(U[1,i+1]))
@@ -213,8 +173,7 @@ class NonlinearMPC():
             self.u_2[-1] = 0
             self.warm_x[:,-1] = np.zeros((5))
 
-
-
+            """Begin Debugging Section"""
             x = sol.value(x)
             y = sol.value(X[1,:])
             theta = sol.value(X[2,:])
@@ -249,17 +208,10 @@ class NonlinearMPC():
                     # print("Av-b for ", i, " is: ", Av-b)
                     # print("Av-b.T @ lam is : ", (Av-b).T @ lam[:,i])
                     # print("-Slack is: ", -slack[i])
-
-
-
                 # vels = np.random.normal(loc=pos.reshape((2,1)), scale=3, size=(2,300))
                 # show = np.all(np.greater(b, A@vels), axis=0)
                 # dots = [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
                 #         for v,s in zip(vels.T, show.T) if s]
-
-
-
-
             return control, viz
         except:
             states = opti.debug.value(X)
