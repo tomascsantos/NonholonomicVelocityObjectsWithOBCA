@@ -35,7 +35,7 @@ DEFAULT_A = np.array([0,0]).reshape((1,2))
 
 class NonlinearMPC():
 
-    def __init__(self, N, dT, lr, vp, A=None):
+    def __init__(self, N, dT, lr, vp, A=None, C=None):
 
         self.N = N # prediction horizon in seconds
         self.dT = dT # timestep
@@ -48,13 +48,17 @@ class NonlinearMPC():
         self.vp = vp
         if (A is not None):
             self.warm_lam = np.zeros((A.shape[0], self.H+1))
+        if (C is not None):
+            self.warm_mu = np.zeros((C.shape[0], self.H+1))
 
 
-    def MPC(self, states, path, A=None, b=None):
+    def MPC(self, states, path, A=None, b=None, C=None, d=None):
         """
         Inputs:
             A: polyhedron normals defining velocity object
             b: polyhedron offsets defining velocity object
+            C: polyhedron normals defining static obstacles
+            d: polyhedron offsets defining static obstacles
         """
 
         opti = Opti() # Optimization problem
@@ -74,22 +78,33 @@ class NonlinearMPC():
             lam = opti.variable(A.shape[0], self.H+1) #dual variables for obstacle opt
             slack = opti.variable(self.H+1) #dual variables for obstacle opt
 
+        if (C is not None):
+            mu = opti.variable(C.shape[0], self.H+1) #dual variables for obstacle opt
+            slack2 = opti.variable(self.H+1)
+
         """Define Cost function"""
         def cost(i):
-            distance_from_path = 4 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
-            distance_from_end = .5 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
-            shallow_steering = .1 *steer_angle[i]*steer_angle[i]
-            speed = 0 #.01 * a[i] * a[i]
-            slack_cost = 0
-            if (A is not None):
-                slack_cost = 100 * slack[i]
-            jerk, backwards = 0,0
+            total = 0
+            #path tracking
+            #distance from path
+            total += 1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
+            #distance from end
+            total += 1 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
+            #shallow steering
+            total += .1 *steer_angle[i]*steer_angle[i]
+            #acceleration
+            total += 0 #.01 * a[i] * a[i]
+            #jerk
             if (i > 0):
-                jerk = (a[i] - a[i-1])**2
-            return speed + distance_from_path \
-                    + shallow_steering + backwards + \
-                    jerk + distance_from_end + slack_cost
-        # cost function
+                total += (a[i] - a[i-1])**2
+            #velocity obstacles (slack)
+            if (A is not None):
+                total += 100 * slack[i]
+            #static obstacles
+            if (C is not None):
+                total += 100 * slack2[i]
+            return total
+
         V = 0
         for i in range(self.H+1):
             if i < len(path[0]):
@@ -119,7 +134,7 @@ class NonlinearMPC():
            opti.subject_to(x[k] - x[k+1] < 1) # limit velocity
 
 
-        """add the obstacle constraints OBCA"""
+        """add the velocity obstacle constraint"""
         if (A is not None):
             for k in range(self.H+1): # loop over lambdas
                 # (Ap - b)'lambda > 0
@@ -131,6 +146,17 @@ class NonlinearMPC():
                 opti.subject_to(lam[:,k] >= 0)
                 opti.subject_to(slack[k] >= 0)
                 norm = lam[:,k].T @ A @ A.T @ lam[:,k]
+                opti.subject_to(norm == 1)
+
+        """Add static obstacle constraint"""
+        if (C is not None):
+            for k in range(self.H+1): # loop over lambdas
+                # (Ap - b)'lambda > 0
+                opti.subject_to((C @ X[:2,k]-d).T @ mu[:,k] > - slack2[k])
+                opti.subject_to(mu[:,k] >= 0)
+                opti.subject_to(slack2[k] >= 0)
+                #|A'lambda|_2 = 1
+                norm = mu[:,k].T @ C @ C.T
                 opti.subject_to(norm == 1)
 
         """Initial Conditions"""
@@ -147,6 +173,8 @@ class NonlinearMPC():
             opti.set_initial(X[:,n], self.warm_x[:,n])
             if (A is not None):
                 opti.set_initial(lam[:,n], self.warm_lam[:,n])
+            if (C is not None):
+                opti.set_initial(mu[:,n], self.warm_mu[:,n])
 
         # solve NLP
         p_opts = {"expand":True}
@@ -175,6 +203,8 @@ class NonlinearMPC():
                 self.warm_x[:,i] = copy.deepcopy(sol.value(X[:,i+1]))
                 if (A is not None):
                     self.warm_lam[:,i] = copy.deepcopy(sol.value(lam[:,i+1]))
+                if (C is not None):
+                    self.warm_mu[:,i] = copy.deepcopy(sol.value(mu[:,i+1]))
             self.u_1[-1] = 0
             self.u_2[-1] = 0
             self.warm_x[:,-1] = np.zeros((5))
@@ -189,10 +219,13 @@ class NonlinearMPC():
             if (A is not None):
                 slack = sol.value(slack)
                 print("Slack cost is: ", slack)
+            if (C is not None):
+                slack2 = sol.value(slack2)
+                print("Slack cost is: ", slack2)
 
             """Visualizing Planned Velocities"""
             viz = []
-            if (True and A is not None):
+            if (False and A is not None):
                 # for i in range(len(v)):
                 i=0
                 pos = [x[i], y[i]]
@@ -221,14 +254,25 @@ class NonlinearMPC():
                 #         for v,s in zip(vels.T, show.T) if s]
             return control, viz
         except:
+            """Begin Debugging Section"""
             states = opti.debug.value(X)
+            x = opti.debug.value(x)
+            y = opti.debug.value(X[1,:])
+            theta = opti.debug.value(X[2,:])
+            v = opti.debug.value(X[3,:])
+            phi = opti.debug.value(X[4,:])
+            theta = opti.debug.value(theta)
             if (A is not None):
-                print(opti.debug.value(lam))
-                print(opti.debug.value(slack))
-            print("NMPC failed", sys.exc_info())
+                slack = opti.debug.value(slack)
+                print("Slack cost is: ", slack)
+            if (C is not None):
+                slack2 = opti.debug.value(slack2)
+                print("Slack2 cost is: ", slack2)
+
             xys = states[:2,:].T
             self.vp += [vtk.shapes.Circle(pos=list(p)+[0],r=.1, c="darkred") for p in xys]
             self.vp.show(interactive=1)
+            print("NMPC failed", sys.exc_info())
             input("finish")
 
 

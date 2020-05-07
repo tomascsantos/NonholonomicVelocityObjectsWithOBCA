@@ -77,12 +77,13 @@ class Agent():
         """
         self.G = np.array([
             [-1,0],
-            [0,1],
-            [1,0],
             [0, -1],
+            [1,0],
+            [0,1],
         ])
+        box_pts = np.array(self.bounding_box.points())
         self.G = self.G @ rotate2D(state[2]).T
-        self.g = np.diagonal(self.G @ box[:,:2].T).reshape(self.G.shape[0],1)
+        self.g = np.diagonal(self.G @ box_pts[:,:2].T).reshape(self.G.shape[0],1)
 
 
 
@@ -216,6 +217,17 @@ class Agent():
         return self.state
 
 
+    def visConvexBoundingBox(self):
+        print("g", self.g)
+        print("G", self.G)
+        pos = np.array([self.state[0], self.state[1], 0])
+        dots = np.random.normal(loc=pos[:2].reshape((2,1)), scale=1, size=(2,300))
+        show = np.all(np.greater(self.g, self.G@dots), axis=0)
+        points = [vtk.shapes.Circle(list(v)+[0], c="purple", r=.05)
+                    for v,s in zip(dots.T, show.T) if s]
+        return points
+
+
 class Map():
 
     agents = []
@@ -277,12 +289,6 @@ def closest_path_point(path, state, vp):
     i = np.argmin(diff_norm)
     return path[:,i:]
 
-def visConvexBoundingBox():
-    dots = np.random.normal(loc=pos[:2].reshape((2,1)), scale=1, size=(2,300))
-    show = np.all(np.greater(self.g, self.G@dots), axis=0)
-    points = [vtk.shapes.Circle(list(v)+[0], c="purple", r=.05)
-                for v,s in zip(dots.T, show.T) if s]
-    return points
 
 
 import time
@@ -311,13 +317,11 @@ def follow_path(vp, map):
         time_f = time.time()
         print("optimization time: ", time_f - start_time)
 
-        # pts = visConvexBoundingBox()
-        # vp += pts
-        vp.show()
-        # if len(pts) > 0:
-        #     vp.clear(pts)
-
-
+        pts = a.visConvexBoundingBox()
+        vp += pts
+        vp.show(interactive=0)
+        if len(pts) > 0:
+            vp.clear(pts)
 
         a.dynamics_step(controls[:,0])
         norm = np.linalg.norm(a.state[:2] - path[:2, -1])
@@ -334,7 +338,7 @@ def go_around_moving_box(vp, map):
 
     """Adding MPC from toolbox"""
     a = map.create_agent("main", state=np.append(path[:,0],[0,0,0]))
-    o_pos = a.state + [20, -1, -np.pi,1,0]
+    o_pos = a.state + [10, 5, -np.pi/2,4,0]
     o = map.create_agent("obstacle", state=o_pos)
 
     A, b, _ = a.visVelocityObstacle()
@@ -383,25 +387,23 @@ def go_around_box(vp, map):
 
     """Define a box and visualize it"""
     #row vector normals
-    A = np.array([
+    C = np.array([
         [0,1],
         [0,-1],
         [1,0],
         [-1,0]
     ])
 
-    b = np.matrix([5,0.5,.5,.5]).T
-    #b = np.matrix([.5]).T
-    print(b.shape)
+    d = np.matrix([5,0.5,.5,.5]).T
 
     vels = np.random.normal(scale=1, size=(2,500))
-    show = np.all(np.greater(b,A@vels), axis=0)
+    show = np.all(np.greater(d,C@vels), axis=0)
     vp += [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
             for v,s in zip(vels.T, show.T) if s]
 
 
     """Adding MPC from toolbox"""
-    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, A, vp)
+    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, vp, C=C)
     a = map.create_agent("main", state=np.append(path[:,0],[0,0,0]))
 
     #while we're not at our destination yet
@@ -410,12 +412,10 @@ def go_around_box(vp, map):
         vp.show()
         path = closest_path_point(path, a.state, vp)
         start_time = time.time()
-        controls = mpc.MPC(a.state, path, A ,b)
+        controls = mpc.MPC(a.state, path, C=C, d=d)
         time_f = time.time()
         print("optimization time: ", time_f - start_time)
 
-        # for c in controls.T:
-        print(controls[:,0])
         a.dynamics_step(controls[:,0])
 
         norm = np.linalg.norm(a.state[:2] - path[:2, -1])
@@ -428,7 +428,8 @@ def main():
     vp = vtk.Plotter(size=(1080, 720), axes=0, interactive=0)
     map = Map(vp)
 
-    follow_path(vp, map)
+    #follow_path(vp, map)
+    go_around_box(vp, map)
     #go_around_moving_box(vp, map)
 
     vp.show(interactive=1)
