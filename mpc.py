@@ -35,7 +35,7 @@ DEFAULT_A = np.array([0,0]).reshape((1,2))
 
 class NonlinearMPC():
 
-    def __init__(self, N, dT, lr, vp, A):
+    def __init__(self, N, dT, lr, vp, A=None):
         self.N = N # prediction horizon in seconds
         self.dT = dT # timestep
         self.H = int(N/dT) # prrdiction horizon steps
@@ -43,15 +43,16 @@ class NonlinearMPC():
         self.u_1 = np.zeros((self.H+1)) # acceleration control
         self.u_2 = np.zeros((self.H+1)) # steering velocity control
         self.warm_x = np.zeros((5,self.H+1))
-        self.warm_lam = np.zeros((A.shape[0], self.H+1))
         self.lr = lr
         self.vp = vp
+        if (A is not None):
+            self.warm_lam = np.zeros((A.shape[0], self.H+1))
 
-    def MPC(self, states, path, A, b):
+    def MPC(self, states, path, A=None, b=None):
         """
         Inputs:
-            A: 2xk ndarray of the obstacle normal vectors
-            b: 1xk ndarray of the obstacle offsets
+            A: polyhedron normals defining velocity object
+            b: polyhedron offsets defining velocity object
         """
 
         opti = Opti() # Optimization problem
@@ -63,21 +64,23 @@ class NonlinearMPC():
         theta = X[2,:]
         v = X[3,:]
         phi = X[4,:]
-
         U = opti.variable(2,self.H+1)   # control trajectory (acceleration and steering velocity)
         a = U[0,:]
         steer_angle = U[1,:]
-
-        lam = opti.variable(A.shape[0], self.H+1) #dual variables for obstacle opt
-        slack = opti.variable(self.H+1) #dual variables for obstacle opt
+        #if we have velocity obstacles
+        if (A is not None):
+            lam = opti.variable(A.shape[0], self.H+1) #dual variables for obstacle opt
+            slack = opti.variable(self.H+1) #dual variables for obstacle opt
 
         """Define Cost function"""
         def cost(i):
-            distance_from_path = .1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
-            distance_from_end = 2 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
+            distance_from_path = 4 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
+            distance_from_end = .5 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
             shallow_steering = .1 *steer_angle[i]*steer_angle[i]
-            speed = 0#.01 * a[i] * a[i]
-            slack_cost = 100 * slack[i]
+            speed = 0 #.01 * a[i] * a[i]
+            slack_cost = 0
+            if (A is not None):
+                slack_cost = 100 * slack[i]
             jerk, backwards = 0,0
             if (i > 0):
                 jerk = (a[i] - a[i-1])**2
@@ -115,17 +118,18 @@ class NonlinearMPC():
 
 
         """add the obstacle constraints OBCA"""
-        for k in range(self.H+1): # loop over lambdas
-            # (Ap - b)'lambda > 0
-            vel_x = v[k] * (casadi.cos(theta[k])) + x[k]
-            vel_y = v[k] * (casadi.sin(theta[k])) + y[k]
-            Av = A[:,0] * vel_x + A[:,1] * vel_y
+        if (A is not None):
+            for k in range(self.H+1): # loop over lambdas
+                # (Ap - b)'lambda > 0
+                vel_x = v[k] * (casadi.cos(theta[k])) + x[k]
+                vel_y = v[k] * (casadi.sin(theta[k])) + y[k]
+                Av = A[:,0] * vel_x + A[:,1] * vel_y
 
-            opti.subject_to((Av-b).T @ lam[:,k] > -slack[k])
-            opti.subject_to(lam[:,k] >= 0)
-            opti.subject_to(slack[k] >= 0)
-            norm = lam[:,k].T @ A @ A.T @ lam[:,k]
-            opti.subject_to(norm == 1)
+                opti.subject_to((Av-b).T @ lam[:,k] > -slack[k])
+                opti.subject_to(lam[:,k] >= 0)
+                opti.subject_to(slack[k] >= 0)
+                norm = lam[:,k].T @ A @ A.T @ lam[:,k]
+                opti.subject_to(norm == 1)
 
         """Initial Conditions"""
         opti.subject_to(x[0]==states[0])
@@ -139,7 +143,8 @@ class NonlinearMPC():
             opti.set_initial(U[0,n], self.u_1[n])
             opti.set_initial(U[1,n], self.u_2[n])
             opti.set_initial(X[:,n], self.warm_x[:,n])
-            opti.set_initial(lam[:,n], self.warm_lam[:,n])
+            if (A is not None):
+                opti.set_initial(lam[:,n], self.warm_lam[:,n])
 
         # solve NLP
         p_opts = {"expand":True}
@@ -166,7 +171,8 @@ class NonlinearMPC():
                 self.u_1[i] = copy.deepcopy(sol.value(U[0,i+1]))
                 self.u_2[i] = copy.deepcopy(sol.value(U[1,i+1]))
                 self.warm_x[:,i] = copy.deepcopy(sol.value(X[:,i+1]))
-                self.warm_lam[:,i] = copy.deepcopy(sol.value(lam[:,i+1]))
+                if (A is not None):
+                    self.warm_lam[:,i] = copy.deepcopy(sol.value(lam[:,i+1]))
             self.u_1[-1] = 0
             self.u_2[-1] = 0
             self.warm_x[:,-1] = np.zeros((5))
@@ -177,13 +183,14 @@ class NonlinearMPC():
             theta = sol.value(X[2,:])
             v = sol.value(X[3,:])
             phi = sol.value(X[4,:])
-            slack = sol.value(slack)
             theta = sol.value(theta)
-            # print(sol.value(lam))
-            print("Slack cost is: ", slack)
-            #turn on to visualize planned velocities
+            if (A is not None):
+                slack = sol.value(slack)
+                print("Slack cost is: ", slack)
+
+            """Visualizing Planned Velocities"""
             viz = []
-            if (True):
+            if (True and A is not None):
                 # for i in range(len(v)):
                 i=0
                 pos = [x[i], y[i]]
@@ -213,8 +220,9 @@ class NonlinearMPC():
             return control, viz
         except:
             states = opti.debug.value(X)
-            print(opti.debug.value(lam))
-            print(opti.debug.value(slack))
+            if (A is not None):
+                print(opti.debug.value(lam))
+                print(opti.debug.value(slack))
             print("NMPC failed", sys.exc_info())
             xys = states[:2,:].T
             self.vp += [vtk.shapes.Circle(pos=list(p)+[0],r=.1, c="darkred") for p in xys]

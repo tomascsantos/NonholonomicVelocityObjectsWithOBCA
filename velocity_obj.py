@@ -24,6 +24,12 @@ def rotate(theta):
         ])
     return rot
 
+def rotate2D(theta):
+    rot = np.array([
+            [np.cos(theta), -np.sin(theta)],
+            [np.sin(theta), np.cos(theta)],
+        ])
+    return rot
 
 class Agent():
     def __init__(self, map, name, state=[0,0,0,0,0]):
@@ -51,15 +57,35 @@ class Agent():
             [0, -CAR_PADDING, 0],
         ])
 
+        #draw the outline of the bounding box
         box = box @ rotate(state[2]).T
         box += pos
         shifted_box = np.concatenate(([box[-1]], box[:-1]))
         self.bounding_box = vtk.shapes.Lines(box, shifted_box, lw=3)
         map.vp += [self.bounding_box]
 
+        #visualize the velocity
         vel = self.getVel3D()
         self.vel_arrow = vtk.shapes.Line(pos, pos + vel, c="r", lw=3)
         map.vp += [self.vel_arrow]
+
+        """
+        To create the convex set for obstacle collision, we define a set
+        B = {y:Gy<=g} where G is the normals and g are the offsets. We start
+        by creating 4 normals to define a rectangle. then we find the offsets
+        by projecting onto the normals.
+        """
+        self.G = np.array([
+            [-1,0],
+            [0,1],
+            [1,0],
+            [0, -1],
+        ])
+        self.G = self.G @ rotate2D(state[2]).T
+        self.g = np.diagonal(self.G @ box[:,:2].T).reshape(self.G.shape[0],1)
+
+
+
 
     def getPos3D(self):
         return np.array([self.state[0], self.state[1],0])
@@ -173,10 +199,13 @@ class Agent():
 
         #rotate visualization points around origin
         pts = pts @ rotate(d_theta).T
+        self.G = self.G @ rotate2D(d_theta).T
 
         #add back the new translation
         pos = np.array([self.state[0], self.state[1], 0])
         pts = pts + pos
+        self.g = np.diagonal(self.G @ pts[:,:2].T).reshape(self.G.shape[0],1)
+
 
         #add a trace of where the car has been
         self.map.vp += [vtk.shapes.Sphere(pos=pos, r=.1, alpha=.5, c="red")]
@@ -231,7 +260,7 @@ def plot_warm_start(warm_start, vp):
 def plot_path(path, vp):
     z = np.zeros((1,len(path[0])))
     path = np.vstack((path, z))
-    vp += [vtk.shapes.Circle(path[:,0]+[0], c="green", r=1)]
+    vp += [vtk.shapes.Circle(path[:,0]+[0], c="green", r=.1)]
     vp += [vtk.shapes.Circle(path[:,-1]+[0], c="red", r=.5)]
     vp += [vtk.shapes.Tube(path.T, c="blue", alpha=1, r=.08)]
 
@@ -248,6 +277,13 @@ def closest_path_point(path, state, vp):
     i = np.argmin(diff_norm)
     return path[:,i:]
 
+def visConvexBoundingBox():
+    dots = np.random.normal(loc=pos[:2].reshape((2,1)), scale=1, size=(2,300))
+    show = np.all(np.greater(self.g, self.G@dots), axis=0)
+    points = [vtk.shapes.Circle(list(v)+[0], c="purple", r=.05)
+                for v,s in zip(dots.T, show.T) if s]
+    return points
+
 
 import time
 def follow_path(vp, map):
@@ -258,26 +294,32 @@ def follow_path(vp, map):
     path = make_sinusoid_path(num_points)
     plot_path(path, vp)
 
-    """Adding MPC from toolbox"""
-    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB)
 
     #follow path with car
     a = map.create_agent("main", state=np.append(path[:,0],[0,0,0]))
+
+    vp.show(interactive=0)
+    """Adding MPC from toolbox"""
+    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, vp)
 
     #while we're not at our destination yet
     norm = np.linalg.norm(a.state[:2] - path[:2, -1])
     while norm > 1:
         path = closest_path_point(path, a.state, vp)
         start_time = time.time()
-        controls = mpc.MPC(a.state, path)
+        controls, viz = mpc.MPC(a.state, path)
         time_f = time.time()
         print("optimization time: ", time_f - start_time)
 
-        # for c in controls.T:
-        print(controls[:,0])
-        a.dynamics_step(controls[:,0])
+        # pts = visConvexBoundingBox()
+        # vp += pts
         vp.show()
+        # if len(pts) > 0:
+        #     vp.clear(pts)
 
+
+
+        a.dynamics_step(controls[:,0])
         norm = np.linalg.norm(a.state[:2] - path[:2, -1])
 
     print("GOAL REACHED")
@@ -298,18 +340,16 @@ def go_around_moving_box(vp, map):
     A, b, _ = a.visVelocityObstacle()
     print("A shape: ", A.shape)
 
-    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, A, vp)
+    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, vp, A=A)
 
-    vp.show(interactive=0)
+    vp.show(interactive=1)
     #while we're not at our destination yet
     norm = np.linalg.norm(a.state[:2] - path[:2, -1])
     while norm > 1:
 
         A, b, planes = a.visVelocityObstacle()
         #visualize the plane and it's feasible region
-        cone = cone_viz(a.getPos3D()[:2], A, b)
         # vp += planes
-        # vp += cone
 
         path = closest_path_point(path, a.state, vp)
         start_time = time.time()
@@ -319,12 +359,8 @@ def go_around_moving_box(vp, map):
 
         vp.show(interactive=0)
         # vp.clear(planes)
-        # if len(cone) > 0:
-        #     vp.clear(cone)
         if len(viz) > 0:
             vp.clear(viz)
-
-
 
         a.dynamics_step(controls[:,0])
         o.dynamics_step([1,0])
@@ -388,48 +424,12 @@ def go_around_box(vp, map):
 
     vp.show(interactive=1)
 
-
-
-def cone_viz(pos, A, b):
-    linespace = np.linspace(0,1,num=50)
-    vels = np.array([
-        pos[0] + 3*np.sin(linespace *2 * np.pi),
-        pos[1] + 3*np.cos(linespace *2*np.pi)
-    ])
-    # vels = np.random.normal(loc=pos.reshape((2,1)), scale=3, size=(2,300))
-    show = np.all(np.greater(b, A@vels), axis=0)
-    dots = [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
-            for v,s in zip(vels.T, show.T) if s]
-    return dots
-
-
-def show_vel_obstacles(vp, map):
-    a = map.create_agent("agent", state=np.array([0,0,np.pi/5,1,0]))
-    o = map.create_agent("obstacle", state=np.array([0,8,-np.pi/8,1,0]))
-
-    for _ in range(100):
-
-        A, b, planes = a.visVelocityObstacle(vp)
-        cone = cone_viz(a.getPos3D()[:2], A, b)
-        vp += cone
-        vp += planes
-        vp.show(interactive=1)
-        vp.clear(planes)
-        vp.clear(cone)
-
-        time.sleep(DT)
-        a.dynamics_step([1,0])
-        o.dynamics_step([1,0])
-
-    vp.show(interactive=1)
-
 def main():
     vp = vtk.Plotter(size=(1080, 720), axes=0, interactive=0)
     map = Map(vp)
 
-    #show_vel_obstacles(vp, map)
-    #follow_path(vp, map)
-    go_around_moving_box(vp, map)
+    follow_path(vp, map)
+    #go_around_moving_box(vp, map)
 
     vp.show(interactive=1)
 
