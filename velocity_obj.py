@@ -331,52 +331,63 @@ def follow_path(vp, map):
     vp.show(interactive=1)
 
 def go_around_moving_box(vp, map):
+    """Generate the Path to follow"""
     num_points = 200
     path = make_line_path(num_points)
     #path = make_sinusoid_path(num_points)
     plot_path(path, vp)
 
-    """Adding MPC from toolbox"""
+    """Define a box and visualize it"""
+    C = np.array([
+        [0,1],
+        [0,-1],
+        [1,0],
+        [-1,0]
+    ])
+    d = np.matrix([.5,0.5,.5,.5]).T
+    vels = np.random.normal(scale=1, size=(2,500))
+    show = np.all(np.greater(d,C@vels), axis=0)
+    vp += [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
+            for v,s in zip(vels.T, show.T) if s]
+
+    """Add the agents to the map and initialize controller"""
     a = map.create_agent("main", state=np.append(path[:,0],[0,0,0]))
     o_pos = a.state + [10, 5, -np.pi/2,4,0]
     o = map.create_agent("obstacle", state=o_pos)
-
     A, b, _ = a.visVelocityObstacle()
-    print("A shape: ", A.shape)
-
-    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, vp, A=A)
-
+    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, vp, A=A, C=C)
     vp.show(interactive=1)
-    #while we're not at our destination yet
+
+    """Loop until arrive at destination"""
     norm = np.linalg.norm(a.state[:2] - path[:2, -1])
     while norm > 1:
-
         A, b, planes = a.visVelocityObstacle()
         #visualize the plane and it's feasible region
         # vp += planes
 
+        #truncate the path to the points in the future
         path = closest_path_point(path, a.state, vp)
+
+        #time the optimization step
         start_time = time.time()
-        controls, viz = mpc.MPC(a.state, path, A ,b)
-        vp += viz
+        controls, viz = mpc.MPC(a.state, path, A=A, b=b, C=C, d=d)
         time_f = time.time()
+        vp += viz
 
         vp.show(interactive=0)
         # vp.clear(planes)
         if len(viz) > 0:
             vp.clear(viz)
 
+        #update simulation
         a.dynamics_step(controls[:,0])
         o.dynamics_step([1,0])
         norm = np.linalg.norm(a.state[:2] - path[:2, -1])
         print("optimization time: ", time_f - start_time)
 
     print("GOAL REACHED")
-    input("continue")
-
+    input("Finished? [hit enter]")
     vp.show(interactive=1)
-
-
 
 
 def go_around_box(vp, map):
@@ -393,9 +404,7 @@ def go_around_box(vp, map):
         [1,0],
         [-1,0]
     ])
-
-    d = np.matrix([5,0.5,.5,.5]).T
-
+    d = np.matrix([.5,0.5,.5,.5]).T
     vels = np.random.normal(scale=1, size=(2,500))
     show = np.all(np.greater(d,C@vels), axis=0)
     vp += [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
@@ -408,11 +417,11 @@ def go_around_box(vp, map):
 
     #while we're not at our destination yet
     norm = np.linalg.norm(a.state[:2] - path[:2, -1])
-    while norm > 1:
+    while norm > 2:
         vp.show()
         path = closest_path_point(path, a.state, vp)
         start_time = time.time()
-        controls = mpc.MPC(a.state, path, C=C, d=d)
+        controls, viz = mpc.MPC(a.state, path, C=C, d=d)
         time_f = time.time()
         print("optimization time: ", time_f - start_time)
 

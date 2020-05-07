@@ -89,11 +89,11 @@ class NonlinearMPC():
             #distance from path
             total += 1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
             #distance from end
-            total += 1 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
+            total += .5 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
             #shallow steering
             total += .1 *steer_angle[i]*steer_angle[i]
             #acceleration
-            total += 0 #.01 * a[i] * a[i]
+            total += .01 * a[i] * a[i]
             #jerk
             if (i > 0):
                 total += (a[i] - a[i-1])**2
@@ -156,7 +156,7 @@ class NonlinearMPC():
                 opti.subject_to(mu[:,k] >= 0)
                 opti.subject_to(slack2[k] >= 0)
                 #|A'lambda|_2 = 1
-                norm = mu[:,k].T @ C @ C.T
+                norm = mu[:,k].T @ C @ C.T @ mu[:,k]
                 opti.subject_to(norm == 1)
 
         """Initial Conditions"""
@@ -271,8 +271,8 @@ class NonlinearMPC():
 
             xys = states[:2,:].T
             self.vp += [vtk.shapes.Circle(pos=list(p)+[0],r=.1, c="darkred") for p in xys]
-            self.vp.show(interactive=1)
             print("NMPC failed", sys.exc_info())
+            self.vp.show(interactive=1)
             input("finish")
 
 
