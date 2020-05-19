@@ -49,10 +49,10 @@ class NonlinearMPC():
         if (A is not None):
             self.warm_lam = np.zeros((A.shape[0], self.H+1))
         if (C is not None):
-            self.warm_mu = np.zeros((C.shape[0], self.H+1))
+            self.warm_lam2 = np.zeros((C.shape[0], self.H+1))
 
 
-    def MPC(self, states, path, A=None, b=None, C=None, d=None):
+    def MPC(self, states, path, agent, A=None, b=None, C=None, d=None):
         """
         Inputs:
             A: polyhedron normals defining velocity object
@@ -60,7 +60,6 @@ class NonlinearMPC():
             C: polyhedron normals defining static obstacles
             d: polyhedron offsets defining static obstacles
         """
-
         opti = Opti() # Optimization problem
 
         # system states and controls
@@ -79,7 +78,8 @@ class NonlinearMPC():
             slack = opti.variable(self.H+1) #dual variables for obstacle opt
 
         if (C is not None):
-            mu = opti.variable(C.shape[0], self.H+1) #dual variables for obstacle opt
+            lam2 = opti.variable(C.shape[0], self.H+1) #dual variables for obstacle opt
+            mu2 = opti.variable(C.shape[0], self.H+1)#dual variable for full-bodied agent
             slack2 = opti.variable(self.H+1)
 
         """Define Cost function"""
@@ -87,22 +87,22 @@ class NonlinearMPC():
             total = 0
             #path tracking
             #distance from path
-            total += 1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
+            total += .1 * ((x[i]-path[0][i])**2+(y[i]-path[1][i])**2)
             #distance from end
-            total += .5 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
+            total += 10 * ((x[i]-path[0][-1])**2+(y[i]-path[1][-1])**2)
             #shallow steering
             total += .1 *steer_angle[i]*steer_angle[i]
             #acceleration
-            total += .01 * a[i] * a[i]
+            total += .1 * a[i] * a[i]
             #jerk
             if (i > 0):
                 total += (a[i] - a[i-1])**2
             #velocity obstacles (slack)
             if (A is not None):
-                total += 100 * slack[i]
+                total += 300 * slack[i]
             #static obstacles
             if (C is not None):
-                total += 100 * slack2[i]
+                total += 300 * slack2[i]
             return total
 
         V = 0
@@ -149,15 +149,24 @@ class NonlinearMPC():
                 opti.subject_to(norm == 1)
 
         """Add static obstacle constraint"""
+        Rot = lambda theta : casadi.blockcat([
+            [casadi.cos(theta), -casadi.sin(theta)],
+            [casadi.sin(theta), casadi.cos(theta)],
+        ])
+        G = agent.G
+        g = agent.g
         if (C is not None):
             for k in range(self.H+1): # loop over lambdas
-                # (Ap - b)'lambda > 0
-                opti.subject_to((C @ X[:2,k]-d).T @ mu[:,k] > - slack2[k])
-                opti.subject_to(mu[:,k] >= 0)
-                opti.subject_to(slack2[k] >= 0)
-                #|A'lambda|_2 = 1
-                norm = mu[:,k].T @ C @ C.T @ mu[:,k]
+                #eq (18) from https://arxiv.org/pdf/1711.03449.pdf
+                opti.subject_to((C @ X[:2,k]-d).T @ lam2[:,k]
+                                > 1 - slack2[k])
+                #we rotate G
+                # opti.subject_to(G.T + Rot(theta[k]).T @ C.T @ lam2[:,k] == 0)
+                norm = lam2[:,k].T @ C @ C.T @ lam2[:,k]
                 opti.subject_to(norm == 1)
+                opti.subject_to(lam2[:,k] >= 0)
+                opti.subject_to(mu2[:,k] >= 0)
+                opti.subject_to(slack2[k] >= 0)
 
         """Initial Conditions"""
         opti.subject_to(x[0]==states[0])
@@ -174,7 +183,7 @@ class NonlinearMPC():
             if (A is not None):
                 opti.set_initial(lam[:,n], self.warm_lam[:,n])
             if (C is not None):
-                opti.set_initial(mu[:,n], self.warm_mu[:,n])
+                opti.set_initial(lam2[:,n], self.warm_lam2[:,n])
 
         # solve NLP
         p_opts = {"expand":True}
@@ -195,6 +204,7 @@ class NonlinearMPC():
             print("acc: ",  sol.value(U[0,0]))
             print("steering: ",  sol.value(U[1,0]))
             control = np.array([sol.value(U[0,:]), sol.value(U[1,:])])
+            print("control shape: " , control.shape)
 
             """Populate Warm Start"""
             for i in range(self.H):
@@ -204,7 +214,7 @@ class NonlinearMPC():
                 if (A is not None):
                     self.warm_lam[:,i] = copy.deepcopy(sol.value(lam[:,i+1]))
                 if (C is not None):
-                    self.warm_mu[:,i] = copy.deepcopy(sol.value(mu[:,i+1]))
+                    self.warm_lam2[:,i] = copy.deepcopy(sol.value(lam2[:,i+1]))
             self.u_1[-1] = 0
             self.u_2[-1] = 0
             self.warm_x[:,-1] = np.zeros((5))
@@ -225,33 +235,30 @@ class NonlinearMPC():
 
             """Visualizing Planned Velocities"""
             viz = []
-            if (False and A is not None):
+            if (True and A is not None):
                 # for i in range(len(v)):
                 i=0
                 pos = [x[i], y[i]]
                 velxy = v[i] * np.array([np.cos(theta[i]), np.sin(theta[i])])
                 velxy += pos
-                viz += [vtk.shapes.Sphere(list(velxy)+[0], c="green", r=.1)]
-                vels = np.random.normal(loc=velxy.reshape(2,1), scale=2.5, size=(2,200))
+                # self.vp += [vtk.shapes.Sphere(list(velxy)+[0], c="green", r=.1)]
+                vels = np.random.normal(loc=velxy.reshape(2,1), scale=4, size=(2,2000))
                 show = np.all(np.greater(b, A@vels), axis=0)
-                viz += [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
-                        for v,s in zip(vels.T, show.T) if s]
-                for i in range(len(v)):
-                    pos = [x[i], y[i]]
-                    velxy = v[i] * np.array([np.cos(theta[i]), np.sin(theta[i])])
-                    velxy += pos
-                    viz += [vtk.shapes.Sphere(list(velxy)+[0], c="green", r=.1)]
-
-                    vel_x = v[i] * (casadi.cos(theta[i])) + x[i]
-                    vel_y = v[i] * (casadi.sin(theta[i])) + y[i]
-                    Av = A[:,0] * vel_x + A[:,1] * vel_y
-                    # print("Av-b for ", i, " is: ", Av-b)
-                    # print("Av-b.T @ lam is : ", (Av-b).T @ lam[:,i])
-                    # print("-Slack is: ", -slack[i])
-                # vels = np.random.normal(loc=pos.reshape((2,1)), scale=3, size=(2,300))
-                # show = np.all(np.greater(b, A@vels), axis=0)
-                # dots = [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
+                # self.vp += [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
                 #         for v,s in zip(vels.T, show.T) if s]
+                # self.vp.show(interactive=1)
+                # for i in range(len(v)):
+                #     pos = [x[i], y[i]]
+                #     velxy = v[i] * np.array([np.cos(phi[i]), np.sin(phi[i])])
+                #     velxy += pos
+                #     #viz += [vtk.shapes.Sphere(list(velxy)+[0], c="green", r=.1)]
+                #
+                #     vel_x = v[i] * (casadi.cos(theta[i])) + x[i]
+                #     vel_y = v[i] * (casadi.sin(theta[i])) + y[i]
+                #     Av = A[:,0] * vel_x + A[:,1] * vel_y
+                #     print("Av-b for ", i, " is: ", Av-b)
+                #     print("Av-b.T @ lam is : ", (Av-b).T @ lam[:,i])
+                #     print("-Slack is: ", -slack[i])
             return control, viz
         except:
             """Begin Debugging Section"""
@@ -270,17 +277,16 @@ class NonlinearMPC():
                 print("Slack2 cost is: ", slack2)
 
             xys = states[:2,:].T
-            self.vp += [vtk.shapes.Circle(pos=list(p)+[0],r=.1, c="darkred") for p in xys]
+            viz = [vtk.shapes.Circle(pos=list(p)+[0],r=.1, c="darkred") for p in xys]
             print("NMPC failed", sys.exc_info())
-            self.vp.show(interactive=1)
-            input("finish")
+            self.vp.show(interactive=0)
 
-
-        # in case it fails use previous computed controls and shift it
-        control = np.array([self.u_1[0], self.u_2[0]])
-        for i in range(self.H):
-            self.u_1[i] = self.u_1[i+1]
-            self.u_2[i] = self.u_2[i+1]
-        self.u_1[-1] = 0
-        self.u_2[-1] = 0
-        return control
+            # in case it fails use previous computed controls and shift it
+            control = np.array([self.u_1[:], self.u_2[:]])
+            print("control shape: ", control.shape)
+            for i in range(self.H):
+                self.u_1[i] = self.u_1[i+1]
+                self.u_2[i] = self.u_2[i+1]
+            self.u_1[-1] = 0
+            self.u_2[-1] = 0
+            return control, viz

@@ -86,8 +86,6 @@ class Agent():
         self.g = np.diagonal(self.G @ box_pts[:,:2].T).reshape(self.G.shape[0],1)
 
 
-
-
     def getPos3D(self):
         return np.array([self.state[0], self.state[1],0])
 
@@ -308,20 +306,21 @@ def follow_path(vp, map):
     """Adding MPC from toolbox"""
     mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, vp)
 
+    input("start")
     #while we're not at our destination yet
     norm = np.linalg.norm(a.state[:2] - path[:2, -1])
     while norm > 1:
         path = closest_path_point(path, a.state, vp)
         start_time = time.time()
-        controls, viz = mpc.MPC(a.state, path)
+        controls, viz = mpc.MPC(a.state, path, a)
         time_f = time.time()
         print("optimization time: ", time_f - start_time)
 
-        pts = a.visConvexBoundingBox()
-        vp += pts
+        # pts = a.visConvexBoundingBox()
+        # vp += pts
         vp.show(interactive=0)
-        if len(pts) > 0:
-            vp.clear(pts)
+        # if len(pts) > 0:
+        #     vp.clear(pts)
 
         a.dynamics_step(controls[:,0])
         norm = np.linalg.norm(a.state[:2] - path[:2, -1])
@@ -337,29 +336,31 @@ def go_around_moving_box(vp, map):
     #path = make_sinusoid_path(num_points)
     plot_path(path, vp)
 
-    """Define a box and visualize it"""
-    C = np.array([
-        [0,1],
-        [0,-1],
-        [1,0],
-        [-1,0]
-    ])
-    d = np.matrix([.5,0.5,.5,.5]).T
-    vels = np.random.normal(scale=1, size=(2,500))
-    show = np.all(np.greater(d,C@vels), axis=0)
-    vp += [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
-            for v,s in zip(vels.T, show.T) if s]
+    # """Define a box and visualize it"""
+    # C = np.array([
+    #     [0,1],
+    #     [0,-1],
+    #     [1,0],
+    #     [-1,0]
+    # ])
+    # d = np.matrix([.5,0.5,.5,.5]).T
+    # vels = np.random.normal(scale=1, size=(2,500))
+    # show = np.all(np.greater(d,C@vels), axis=0)
+    # vp += [vtk.shapes.Sphere(list(v)+[0], c="purple", r=.05)
+    #         for v,s in zip(vels.T, show.T) if s]
 
     """Add the agents to the map and initialize controller"""
     a = map.create_agent("main", state=np.append(path[:,0],[0,0,0]))
-    o_pos = a.state + [10, 5, -np.pi/2,4,0]
+    o_pos = a.state + [20, 0, -np.pi,2,0]
     o = map.create_agent("obstacle", state=o_pos)
     A, b, _ = a.visVelocityObstacle()
-    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, vp, A=A, C=C)
-    vp.show(interactive=1)
+    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, vp, A=A)
+    vp.show()
+    input("being visualization: [hit enter]")
 
     """Loop until arrive at destination"""
     norm = np.linalg.norm(a.state[:2] - path[:2, -1])
+    times = []
     while norm > 1:
         A, b, planes = a.visVelocityObstacle()
         #visualize the plane and it's feasible region
@@ -370,7 +371,7 @@ def go_around_moving_box(vp, map):
 
         #time the optimization step
         start_time = time.time()
-        controls, viz = mpc.MPC(a.state, path, A=A, b=b, C=C, d=d)
+        controls, viz = mpc.MPC(a.state, path, a, A=A, b=b)
         time_f = time.time()
         vp += viz
 
@@ -383,9 +384,11 @@ def go_around_moving_box(vp, map):
         a.dynamics_step(controls[:,0])
         o.dynamics_step([1,0])
         norm = np.linalg.norm(a.state[:2] - path[:2, -1])
-        print("optimization time: ", time_f - start_time)
+        time_diff = time_f - start_time
+        times.append(time_diff)
 
     print("GOAL REACHED")
+    print("mean time: ", np.mean(times), "max: ", np.max(times), "median", np.median(times))
     input("Finished? [hit enter]")
     vp.show(interactive=1)
 
@@ -412,16 +415,18 @@ def go_around_box(vp, map):
 
 
     """Adding MPC from toolbox"""
-    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, vp, C=C)
     a = map.create_agent("main", state=np.append(path[:,0],[0,0,0]))
+    mpc = NonlinearMPC(HORIZON_SECS, 0.1, WB, vp, C=C)
 
+    vp.show()
+    input("being visualization: [hit enter]")
     #while we're not at our destination yet
     norm = np.linalg.norm(a.state[:2] - path[:2, -1])
     while norm > 2:
-        vp.show()
+        vp.show(interactive=0)
         path = closest_path_point(path, a.state, vp)
         start_time = time.time()
-        controls, viz = mpc.MPC(a.state, path, C=C, d=d)
+        controls, viz = mpc.MPC(a.state, path, a, C=C, d=d)
         time_f = time.time()
         print("optimization time: ", time_f - start_time)
 
@@ -438,8 +443,8 @@ def main():
     map = Map(vp)
 
     #follow_path(vp, map)
-    go_around_box(vp, map)
-    #go_around_moving_box(vp, map)
+    #go_around_box(vp, map)
+    go_around_moving_box(vp, map)
 
     vp.show(interactive=1)
 
